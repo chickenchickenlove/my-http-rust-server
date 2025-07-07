@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{Read};
+use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::net::{TcpListener, TcpStream};
 use std::str::FromStr;
 use anyhow::Result;
@@ -23,21 +23,24 @@ fn listen() {
     }
 }
 
-fn handle_request(stream: &mut TcpStream) {
+fn handle_request(stream: &TcpStream) {
     println!("Connection established! information {:#?}", stream);
+
+    let mut reader = BufReader::new(stream);
+    let mut writer = BufWriter::new(stream);
 
     loop {
 
-        if let Ok(preface_buf) = read_until_preface_message(stream) {
-            let protocol = verify_protocol(&preface_buf);
-            read_header(stream);
+        if let Ok(preface_message) = read_until_preface_message(&mut reader) {
+            let protocol = verify_protocol(preface_message.as_str());
+            read_header(&mut reader);
         }
 
     }
 }
 
-fn verify_protocol(preface_message: &Vec<u8>) -> HttpProtocol {
-    if preface_message == b"PRI * HTTP/2.0\r\n" {
+fn verify_protocol(preface_message: &str) -> HttpProtocol {
+    if preface_message  == "PRI * HTTP/2.0\r\n" {
         HttpProtocol::HTTP2
     }
     else {
@@ -46,35 +49,31 @@ fn verify_protocol(preface_message: &Vec<u8>) -> HttpProtocol {
 }
 
 // POST / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.9.1\r\nAccept: */*\r\nContent-Length: 2290\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n
-fn read_until_preface_message(stream: &mut TcpStream) -> Result<Vec<u8>> {
-    let mut preface_buf = Vec::new();
+fn read_until_preface_message(reader: &mut BufReader<&TcpStream>) -> Result<String> {
+    let mut preface_msg = String::new();
     loop {
-        let mut temp_buf = vec![0u8; 1];
-        stream.read(&mut temp_buf)?;
-        preface_buf.extend_from_slice(&temp_buf);
+        // TODO: Use Error to prevent panic.
+        reader.read_line(&mut preface_msg);
 
-        if preface_buf.ends_with(b"\r\n") {
+        if preface_msg.ends_with("\r\n") {
             break;
         }
     }
 
-    Ok(preface_buf)
+    Ok(preface_msg)
 }
 
-fn read_header(stream: &mut TcpStream) -> Result<Headers> {
-    let mut headers_buf = Vec::new();
-
+fn read_header(reader: &mut BufReader<&TcpStream>) -> Result<Headers> {
+    let mut headers_string = String::new();
     loop {
-        let mut temp_buf = vec![0u8; 1];
-        stream.read(&mut temp_buf)?;
-        headers_buf.extend_from_slice(&temp_buf);
-
-        if headers_buf.ends_with(b"\r\n\r\n") {
+        reader.read_line(&mut headers_string);
+        if headers_string.ends_with("\r\n\r\n") {
             break;
         }
+
     }
 
-    if let Ok(headers) = Headers::from_str(String::from_utf8(headers_buf)?.as_str()) {
+    if let Ok(headers) = Headers::from_str(headers_string.as_str()) {
         println!("{:#?}", headers);
         Ok(headers)
     }
