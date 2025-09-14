@@ -6,6 +6,6 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.98"
 bytes = "1.10.1"
-tokio = {  version = "1.47.0", features = ["macros", "rt-multi-thread", "net", "time"] }
+tokio = {  version = "1.47.0", features = ["macros", "rt-multi-thread", "net", "time", "io-util"] }
 tokio-stream = { version = "0.1.17", default-features = false, features = ["net"] }
 tokio-util = { version = "0.7.15", features = ["io"]}

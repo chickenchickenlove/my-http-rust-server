@@ -1,8 +1,12 @@
+mod handler;
+
+use handler::{http1_handle};
+
+
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::thread;
-use std::io::{BufRead, BufReader, BufWriter, Read};
-// use std::net::{TcpListener, TcpStream};
+use std::io::{Read};
 use std::str::FromStr;
 use anyhow::Result;
 
@@ -10,7 +14,7 @@ use bytes::BytesMut;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::io::read_buf;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::TcpListenerStream;
 
@@ -34,24 +38,42 @@ async fn listen() -> Result<()>{
 async fn handle_request(mut stream: TcpStream) -> Result<()> {
     println!("Connection established! information {:#?}", stream);
 
-    let mut buf = BytesMut::with_capacity(1024);
-    read_buf(&mut stream, &mut buf).await?;
+    let (read_half, write_half) = stream.into_split();
+    // TcpStream을 Reader / Writer 모두에게 소유권을 줄 수 없음.
+    let mut reader = BufReader::new(read_half);
+    let mut writer = BufWriter::new(write_half);
+
+    let mut read_buf = Vec::with_capacity(1024);
 
     let client_protocol;
-
     loop {
-        println!("Parse Protocol");
-        let mut lines = buf.lines();
-        if let Some(Ok(line)) = lines.next() {
-            client_protocol = verify_protocol(&line);
-            break
-        }
-        else {
-            read_buf(&mut stream, &mut buf).await?;
+        let read_size = reader.read_until(b'\n', &mut read_buf).await?;
+        if read_size > 0 {
+            client_protocol = verify_protocol(&read_buf);
+            break;
         }
     }
 
     println!("client_protocol: {:?}", client_protocol);
+
+    match client_protocol {
+        VerifyProtocol::HTTP1 => {
+            if let Ok(preface_message) = String::from_utf8(read_buf) {
+                http1_handle(&preface_message, reader, writer).await?;
+            }
+            else {
+                writer.write("Invalid HTTP1 preface message\n".to_string().as_bytes()).await?;
+                writer.flush().await?;
+            }
+        }
+        VerifyProtocol::HTTP2 => {
+
+        }
+        VerifyProtocol::INVALID => {
+            writer.write("Invalid Protocol\n".to_string().as_bytes()).await?;
+            writer.flush().await?;
+        }
+    }
 
     Ok(())
 }
@@ -63,100 +85,21 @@ enum VerifyProtocol {
     INVALID,
 }
 
-fn verify_protocol(message: &String) -> VerifyProtocol {
-    if message.starts_with("PRI * HTTP/2.0") {
-        println!("here1");
+fn verify_protocol(message: &Vec<u8>) -> VerifyProtocol {
+    println!("{:?}", message);
+    if message.starts_with(b"PRI * HTTP/2.0") {
         VerifyProtocol::HTTP2
     }
+    else if message.ends_with(b"HTTP/1\r\n") {
+        VerifyProtocol::HTTP1
+    }
+    else if message.ends_with(b"HTTP/1.1\r\n") {
+        VerifyProtocol::HTTP1
+    }
     else {
-        println!("message : {}", message);
-        if message.contains("HTTP/1") {
-            VerifyProtocol::HTTP1
-        }
-        else {
-            VerifyProtocol::INVALID
-        }
+        VerifyProtocol::INVALID
     }
 }
-
-
-// fn verify_protocol(preface_message: &str) -> HttpProtocol {
-//     if preface_message  == "PRI * HTTP/2.0\r\n" {
-//         HttpProtocol::HTTP2
-//     }
-//     else {
-//         HttpProtocol::HTTP1
-//     }
-// }
-//
-// // POST / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.9.1\r\nAccept: */*\r\nContent-Length: 2290\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n
-// fn read_until_preface_message(reader: &mut BufReader<&TcpStream>) -> Result<String> {
-//     let mut preface_msg = String::new();
-//     loop {
-//         // TODO: Use Error to prevent panic.
-//         // TODO : async.
-//         reader.read_line(&mut preface_msg);
-//
-//         if preface_msg.ends_with("\r\n") {
-//             break;
-//         }
-//     }
-//
-//     Ok(preface_msg)
-// }
-//
-// fn read_header(reader: &mut BufReader<&TcpStream>) -> Result<Headers> {
-//     let mut headers_string = String::new();
-//     loop {
-//         reader.read_line(&mut headers_string);
-//         if headers_string.ends_with("\r\n\r\n") {
-//             break;
-//         }
-//
-//     }
-//
-//     if let Ok(headers) = Headers::from_str(headers_string.as_str()) {
-//         println!("{:#?}", headers);
-//         Ok(headers)
-//     }
-//     else {
-//         Err(anyhow::Error::msg("Failed to parse headers"))
-//     }
-// }
-//
-// #[derive(Debug)]
-// struct Headers {
-//     headers: HashMap<String, String>
-// }
-//
-// #[derive(Debug)]
-// pub enum HeaderParseError {
-//     /// It is not `:` format.
-//     MissingColon,
-//     /// For example, "Host:"
-//     EmptyValue,
-//     // Etc
-//     InvalidFormat,
-// }
-//
-//
-// impl FromStr for Headers {
-//     type Err = HeaderParseError;
-//
-//     fn from_str(headers_string: &str) -> std::result::Result<Self, Self::Err> {
-//         let mut headers: HashMap<String, String> = HashMap::new();
-//         for header_kv in headers_string.strip_suffix("\r\n\r\n").unwrap().split("\r\n") {
-//             if let Some((key, value)) = header_kv.split_once(": ") {
-//                 headers.insert(key.to_string(), value.to_string());
-//             }
-//             else {
-//                 return Err(HeaderParseError::InvalidFormat)
-//             }
-//         }
-//
-//         Ok(Headers{headers: headers})
-//     }
-// }
 
 #[tokio::main]
 async fn main() -> Result<()>{
