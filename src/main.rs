@@ -1,109 +1,52 @@
-mod handler;
+pub mod connection;
+pub mod handler;
+mod server;
+mod dispatcher;
+mod task;
+mod http_type;
+mod http_object;
+mod http_status;
 
-use handler::{http1_handle};
-
-
-use std::collections::HashMap;
-use std::fmt::Write;
-use std::thread;
-use std::io::{Read};
-use std::str::FromStr;
 use anyhow::Result;
+use crate::dispatcher::{Handler, Method};
+use crate::http_object::{HttpRequest, HttpResponse};
 
-use bytes::BytesMut;
-
-use tokio::net::{TcpListener, TcpStream};
-use tokio_util::io::read_buf;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::TcpListenerStream;
-
-enum HttpProtocol {
-    HTTP1,
-    HTTP2
+fn hello_test(req: HttpRequest, res: HttpResponse) -> Result<HttpResponse> {
+    println!("hello test");
+    Ok(res)
 }
 
-async fn listen() -> Result<()>{
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
-    let mut incoming = TcpListenerStream::new(listener);
-
-    while let Some(Ok(tcp_stream)) = incoming.next().await {
-        tokio::task::spawn(handle_request(tcp_stream));
-    }
-
-    Ok(())
-}
-
-// Tokio의 Single Thread Executor
-async fn handle_request(mut stream: TcpStream) -> Result<()> {
-    println!("Connection established! information {:#?}", stream);
-
-    let (read_half, write_half) = stream.into_split();
-    // TcpStream을 Reader / Writer 모두에게 소유권을 줄 수 없음.
-    let mut reader = BufReader::new(read_half);
-    let mut writer = BufWriter::new(write_half);
-
-    let mut read_buf = Vec::with_capacity(1024);
-
-    let client_protocol;
-    loop {
-        let read_size = reader.read_until(b'\n', &mut read_buf).await?;
-        if read_size > 0 {
-            client_protocol = verify_protocol(&read_buf);
-            break;
-        }
-    }
-
-    println!("client_protocol: {:?}", client_protocol);
-
-    match client_protocol {
-        VerifyProtocol::HTTP1 => {
-            if let Ok(preface_message) = String::from_utf8(read_buf) {
-                http1_handle(&preface_message, reader, writer).await?;
-            }
-            else {
-                writer.write("Invalid HTTP1 preface message\n".to_string().as_bytes()).await?;
-                writer.flush().await?;
-            }
-        }
-        VerifyProtocol::HTTP2 => {
-
-        }
-        VerifyProtocol::INVALID => {
-            writer.write("Invalid Protocol\n".to_string().as_bytes()).await?;
-            writer.flush().await?;
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Debug)]
-enum VerifyProtocol {
-    HTTP1,
-    HTTP2,
-    INVALID,
-}
-
-fn verify_protocol(message: &Vec<u8>) -> VerifyProtocol {
-    println!("{:?}", message);
-    if message.starts_with(b"PRI * HTTP/2.0") {
-        VerifyProtocol::HTTP2
-    }
-    else if message.ends_with(b"HTTP/1\r\n") {
-        VerifyProtocol::HTTP1
-    }
-    else if message.ends_with(b"HTTP/1.1\r\n") {
-        VerifyProtocol::HTTP1
-    }
-    else {
-        VerifyProtocol::INVALID
-    }
+fn ballo_test(req: HttpRequest, res: HttpResponse) -> Result<HttpResponse> {
+    println!("ballo test");
+    Ok(res)
 }
 
 #[tokio::main]
-async fn main() -> Result<()>{
-    println!("Hello, world!");
-    listen().await?;
-    Ok(())
+async fn main() -> Result<()> {
+
+    // #1
+    // Dispatcher를 Arc로 넘기다보니, Server를 직접 만들어서 라우팅을 추가하는게 되지 않았다.
+    // 따라서 Builder로 처음에 다 준비가 되면, Server를 만들 때 Arc<Dispatcher>로 전달.
+
+    // #2
+    // Arc<Dispatcher>가 필요한 이유는, tokio::spawn(...)을 이용해 비동기 Task를 생성해서 dispatch를 하려고 하는데
+    // dispatcher를 여러 Task에서 사용하기 위해서 Future + Send + 'static를 구현해야하기 때문이다.
+    // 따라서 Arc<Dispatcher>를 해서 Send + Sync를 구현하도록 한다.
+    // 그런데 Dispatcher → Router → HashMap<_, Box<dyn Fn()>>로 들어가면, dyn Fn()는 기본적으로 Send/Sync가 아님 → Router: !Sync → Dispatcher: !Sync → &Dispatcher: !Send → 스폰 불가.
+    // dispatch(&self, ...)를 tokio::spawn에 바로 넘기면, 생성된 Future가 스택에 있는 self를 &self로 캡처(빌림)함.
+    // spawn은 Future: Send + 'static을 요구하므로 스택에 의존하는 빌림이 있으면 거절됨.
+    // 해결은 “소유”하도록 해야한다.
+    // 즉, Arc<Dispatcher>를 값으로 async move 태스크에 옮겨 담으면 그 Future는 더 이상 외부 스택을 참조하지 않으므로 'static 요구를 만족합니다.
+    // Arc를 소유권으로 캡처하면서 빌림을 없애기 때문에 그 Future가 'static이 되는것임.
+    let mut server_builder = server::ServerBuilder::new();
+    server_builder.host("127.0.0.1")
+        .port(8080)
+        .add(Method::GET, "/hello", hello_test)
+        .add(Method::GET, "/ballo", ballo_test);
+
+    let mut server = server_builder.build();
+
+    server
+        .serve()
+        .await
 }
