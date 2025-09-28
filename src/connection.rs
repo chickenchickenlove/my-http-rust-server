@@ -1,20 +1,11 @@
-// mod handler;
-// mod ash;
-// mod dispatcher;
-// mod connection;
-//
-// use handler::{http1_handle};
-
-use std::fmt::format;
-use std::io::{Read};
-use std::str::FromStr;
 use anyhow::{bail, Result};
-use crate::handler::{Http1Handler, HttpConnectionHandler, HttpConnectionContext};
+use crate::connection_reader::{Http1Handler, HttpConnectionReader, HttpConnectionContext};
 
-use tokio::net::{TcpListener, TcpStream};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::net::{TcpStream};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::http_object::HttpResponse;
+use crate::http_type::HttpProtocol;
 
 pub struct ConnectionOwner {
     reader: BufReader<OwnedReadHalf>,
@@ -23,6 +14,7 @@ pub struct ConnectionOwner {
 
 impl ConnectionOwner {
 
+    // TODO : Buffer를 Cow로 처리하는게 낫지 않을까?
     pub fn new(tcp_stream: TcpStream) -> Self {
         // TcpStream을 Reader / Writer 모두에게 소유권을 줄 수 없음.
         let (read_half, write_half) = tcp_stream.into_split();
@@ -33,8 +25,6 @@ impl ConnectionOwner {
     }
 
     pub async fn handle(&mut self) -> Result<HttpConnectionContext> {
-        // println!("Connection established! information {:#?}", self.tcp_stream);
-
         let mut read_buf = Vec::with_capacity(1024);
 
         let client_protocol;
@@ -49,28 +39,28 @@ impl ConnectionOwner {
         println!("client_protocol: {:?}", client_protocol);
 
         let conn_context = match client_protocol {
-            VerifyProtocol::HTTP1 => {
+            HttpProtocol::HTTP1 => {
                 if let Ok(preface_message) = String::from_utf8(read_buf) {
                     Http1Handler::new()
-                        .handle(preface_message.as_str(),
-                                &mut self.reader,
-                                &mut self.writer,
-                                )
+                        .handle(preface_message.as_str(), &mut self.reader)
                         .await?
                 }
                 else {
-                    self.writer.write("Invalid HTTP1 preface message\n".to_string().as_bytes()).await?;
+                    // Don't call write(...) to prevent partial write.
+                    self.writer.write_all("Invalid HTTP1 preface message\n".to_string().as_bytes()).await?;
                     self.writer.flush().await?;
                     bail!("Invalid HTTP1 preface message\n")
                 }
             }
-            VerifyProtocol::HTTP2 => {
-                self.writer.write("Currently HTTP/2 is unsupported.\n".to_string().as_bytes()).await?;
+            HttpProtocol::HTTP2 => {
+                // Don't call write(...) to prevent partial write.
+                self.writer.write_all("Currently HTTP/2 is unsupported.\n".to_string().as_bytes()).await?;
                 self.writer.flush().await?;
                 bail!("Currently HTTP/2 is unsupported.\n")
             }
-            VerifyProtocol::INVALID => {
-                self.writer.write("Invalid Protocol\n".to_string().as_bytes()).await?;
+            HttpProtocol::INVALID => {
+                // Don't call write(...) to prevent partial write.
+                self.writer.write_all("Invalid Protocol\n".to_string().as_bytes()).await?;
                 self.writer.flush().await?;
                 bail!("Unsupported Protocol or Invalid protocol")
             }
@@ -87,7 +77,7 @@ impl ConnectionOwner {
     // Connection: keep-alive
     //
     // Hello, World!
-    pub async fn response(&mut self, res: HttpResponse) {
+    pub async fn response(&mut self, res: HttpResponse) -> Result<()>{
         let status_code: u16 = res.get_status_code().into();
         let status_text: String = res.get_status_code().into();
 
@@ -97,36 +87,28 @@ impl ConnectionOwner {
         let total = format!("{}{}\r\n", status_line, header);
 
         println!("ASH {}", total);
-        self.writer.write(total.as_bytes()).await;
-        self.writer.flush().await;
+        // Don't call write(...) to prevent partial write.
+        self.writer.write_all(total.as_bytes()).await?;
+        self.writer.flush().await?;
 
+        Ok(())
     }
 
 }
 
 
-
-
-
-#[derive(Debug)]
-enum VerifyProtocol {
-    HTTP1,
-    HTTP2,
-    INVALID,
-}
-
-fn verify_protocol(message: &Vec<u8>) -> VerifyProtocol {
+fn verify_protocol(message: &Vec<u8>) -> HttpProtocol {
     println!("{:?}", message);
     if message.starts_with(b"PRI * HTTP/2.0") {
-        VerifyProtocol::HTTP2
+        HttpProtocol::HTTP2
     }
     else if message.ends_with(b"HTTP/1\r\n") {
-        VerifyProtocol::HTTP1
+        HttpProtocol::HTTP1
     }
     else if message.ends_with(b"HTTP/1.1\r\n") {
-        VerifyProtocol::HTTP1
+        HttpProtocol::HTTP1
     }
     else {
-        VerifyProtocol::INVALID
+        HttpProtocol::INVALID
     }
 }

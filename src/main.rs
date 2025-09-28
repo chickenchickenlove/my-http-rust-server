@@ -1,14 +1,17 @@
 pub mod connection;
-pub mod handler;
+pub mod connection_reader;
 mod server;
 mod dispatcher;
 mod task;
 mod http_type;
 mod http_object;
 mod http_status;
+mod parse_header;
+mod http_connection_context;
+mod http_request_context;
 
 use anyhow::Result;
-use crate::dispatcher::{Handler, Method};
+use crate::dispatcher::{Method};
 use crate::http_object::{HttpRequest, HttpResponse};
 
 fn hello_test(req: HttpRequest, res: HttpResponse) -> Result<HttpResponse> {
@@ -41,8 +44,8 @@ async fn main() -> Result<()> {
     let mut server_builder = server::ServerBuilder::new();
     server_builder.host("127.0.0.1")
         .port(8080)
-        .add(Method::GET, "/hello", hello_test)
-        .add(Method::GET, "/ballo", ballo_test);
+        .add(Method::GET, "/hello", hello_test)?
+        .add(Method::GET, "/ballo", ballo_test)?;
 
     let mut server = server_builder.build();
 

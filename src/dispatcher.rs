@@ -1,12 +1,12 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use tokio::net::TcpStream;
 use crate::connection::{ConnectionOwner};
-use crate::handler::{HttpConnectionContext};
+use crate::connection_reader::{HttpConnectionContext};
 use crate::http_object::{HttpRequest, HttpResponse};
 
 use anyhow::{bail, Result};
 use crate::http_status::HttpStatus;
-use crate::http_status::HttpStatus::OK;
 
 pub struct Dispatcher {
     router: Router
@@ -19,8 +19,8 @@ impl Dispatcher {
         Dispatcher { router : Router::new() }
     }
 
-    pub fn add(&mut self, method: Method, path: &str, handler: Handler) -> () {
-        self.router.add(method, path, handler);
+    pub fn add(&mut self, method: Method, path: &str, handler: Handler) -> Result<()> {
+        Ok(self.router.add(method, path, handler)?)
     }
 
     // async dispatch(...)에서 &self가 들어온다. 그리고 이 함수는 spawn(...)에 의해서 생성되는데,
@@ -29,32 +29,33 @@ impl Dispatcher {
     pub async fn dispatch(&self, tcp_stream: TcpStream) -> Result<()> {
         let mut owner = ConnectionOwner::new(tcp_stream);
         let conn_context = owner.handle().await?;
+
         let res = match conn_context {
             HttpConnectionContext::HTTP1Context(ctx) => {
-                let req: HttpRequest = ctx.into();
-                if let Some(handler) = self.router.find(req.method.clone(), req.path.as_str()) {
+                let req: HttpRequest = ctx.clone_req_ctx().into();
+                if let Some(handler) = self.router.find(req.method, req.path.as_str()) {
                     handler(req, HttpResponse::new())
                 }
                 else {
-                    let mut res = HttpResponse::new();
-                    res.set_status_code(HttpStatus::NotFound);
-                    Ok(res)
+                    Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
                 }
             }
         };
 
-        match res {
+        let res_future = match res {
             Ok(r) => {
-                owner.response(r).await;
+                owner.response(r)
             },
-            Err(e) => {
+            Err(_e) => {
                 let mut r = HttpResponse::new();
                 r.set_status_code(HttpStatus::InternalServerError);
-                owner.response(r).await;
+                owner.response(r)
             }
+        };
 
+        if let Err(e) = res_future.await {
+            println!("Error occured {:?}. client may got receive response from server.", e);
         }
-
 
         Ok(())
     }
@@ -69,7 +70,7 @@ struct Router {
     delete_routes: HashMap<String, Handler>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Method {
     GET,
     POST,
@@ -112,27 +113,20 @@ impl Router {
             bail!("Invalid path: {}. path should starts with '/'", path);
         }
 
-        let maybe_routes = match method {
-            Method::GET    => Some(&mut self.get_routes),
-            Method::POST   => Some(&mut self.post_routes),
-            Method::PUT    => Some(&mut self.put_routes),
-            Method::DELETE => Some(&mut self.delete_routes),
-            _              => None
-        };
-
-        if let Some(routes) = maybe_routes {
-            Self::add_(routes, path, handler);
-        }
+        let routes = self.find_route_by_method(method)?;
+        Self::add_(routes, path, handler)?;
         Ok(())
     }
 
-    fn find_route_by_method(&mut self, method: Method) -> Option<&mut HashMap<String, Handler>> {
+    fn find_route_by_method(&mut self, method: Method) -> Result<&mut HashMap<String, Handler>>
+    where Method: Debug
+    {
         match method {
-            Method::GET    => Some(&mut self.get_routes),
-            Method::POST   => Some(&mut self.post_routes),
-            Method::PUT    => Some(&mut self.put_routes),
-            Method::DELETE => Some(&mut self.delete_routes),
-            _              => None
+            Method::GET    => Ok(&mut self.get_routes),
+            Method::POST   => Ok(&mut self.post_routes),
+            Method::PUT    => Ok(&mut self.put_routes),
+            Method::DELETE => Ok(&mut self.delete_routes),
+            _              => bail!("failed to find handler to dispatch for method: {:?}", method)
         }
     }
 
