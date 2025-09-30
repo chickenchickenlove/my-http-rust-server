@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
+use std::process::Output;
 use tokio::net::TcpStream;
 use crate::connection::{ConnectionOwner};
 use crate::connection_reader::{HttpConnectionContext};
@@ -13,7 +16,10 @@ pub struct Dispatcher {
     router: Router
 }
 
-pub type Handler = fn(HttpRequest, HttpResponse) -> Result<HttpResponse>;
+// TODO: Handler Function을 Future로 바꿔야 함.
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output=T> + Send + 'a>>;
+pub type Handler = fn(HttpRequest, HttpResponse) -> BoxFuture<'static, Result<HttpResponse>>;
+// pub type Handler = fn(HttpRequest, HttpResponse) -> Result<HttpResponse>;
 
 impl Dispatcher {
     pub fn new() -> Dispatcher {
