@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use anyhow::anyhow;
 use bytes::Bytes;
-use crate::dispatcher::Method;
+use crate::http_type::Method;
 
 #[derive(Clone)]
 pub struct Http1RequestContext {

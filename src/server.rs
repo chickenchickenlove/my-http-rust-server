@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::dispatcher::{Dispatcher, Handler};
-
+use crate::http_type::Method;
 use tokio::net::{TcpListener};
 use tokio::task::{spawn};
 use tokio_stream::StreamExt;
@@ -33,7 +33,7 @@ impl <'a> ServerBuilder<'a> {
         self
     }
 
-    pub fn add(&mut self, method: crate::dispatcher::Method, path: &str, handler: Handler) -> anyhow::Result<&mut Self>{
+    pub fn add(&mut self, method: Method, path: &str, handler: Handler) -> anyhow::Result<&mut Self>{
         self.dispatcher.add(method, path, handler)?;
         Ok(self)
     }
@@ -72,8 +72,9 @@ impl Server {
                     // 해결은 “소유”하도록 해야한다.
                     // 즉, Arc<Dispatcher>를 값으로 async move 태스크에 옮겨 담으면 그 Future는 더 이상 외부 스택을 참조하지 않으므로 'static 요구를 만족합니다.
                     // Arc를 소유권으로 캡처하면서 빌림을 없애기 때문에 그 Future가 'static이 되는것임.
-                    spawn(async move {
+                    let _join_handle = spawn(async move {
                         dis.dispatch(tcp_stream).await});
+
                 },
                 Err(err) => {
                     println!("Failed to establish connection: {}", err);

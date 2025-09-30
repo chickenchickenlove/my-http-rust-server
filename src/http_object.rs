@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use bytes::Bytes;
-use crate::http_type::HttpProtocol;
-use crate::dispatcher::Method;
+use crate::http_type::{HttpProtocol, Method};
 use crate::http_status::HttpStatus;
 use crate::http_type::HttpProtocol::HTTP1;
 use crate::http_request_context::{Http1RequestContext};
@@ -55,8 +54,27 @@ impl HttpResponse {
         self.status_code = status_code;
     }
 
+    pub fn set_body(&mut self, body: impl Into<String>) {
+        self.body.replace(body.into());
+    }
+
     pub fn get_status_code(&self) -> HttpStatus {
         self.status_code
+    }
+
+    pub fn insert_header(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let k = key.into();
+        let v = value.into();
+        self.headers.insert(k, v);
+    }
+
+    pub fn into_parts(self) -> (HttpStatus, HashMap<String, String>, Option<Bytes>) {
+        let body_bytes = match self.body {
+            Some(b) => Some(Bytes::from(b)),
+            None => None
+        };
+
+        (self.status_code, self.headers, body_bytes)
     }
 
 }

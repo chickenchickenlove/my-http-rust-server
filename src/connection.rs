@@ -1,4 +1,8 @@
+use std::ptr::write;
 use anyhow::{bail, Result};
+use chrono::{Utc, DateTime};
+use chrono::format::strftime::StrftimeItems;
+use bytes::{BufMut, Bytes, BytesMut};
 use crate::connection_reader::{Http1Handler, HttpConnectionReader, HttpConnectionContext};
 
 use tokio::net::{TcpStream};
@@ -78,17 +82,41 @@ impl ConnectionOwner {
     //
     // Hello, World!
     pub async fn response(&mut self, res: HttpResponse) -> Result<()>{
-        let status_code: u16 = res.get_status_code().into();
-        let status_text: String = res.get_status_code().into();
+        let mut writer_buffer = BytesMut::new();
+        let (http_status, mut headers, mut maybe_body) = res.into_parts();
 
-        let header = "Content-Length: 0\r\n";
-
+        let status_code: u16 = http_status.into();
+        let status_text: String = http_status.into();
         let status_line = format!("{} {} {}\r\n", "HTTP/1.1", status_code, status_text);
-        let total = format!("{}{}\r\n", status_line, header);
+        writer_buffer.put(status_line.as_bytes());
 
-        println!("ASH {}", total);
+        if let Some(body) = maybe_body.as_ref() {
+            headers.insert("Content-Length".to_string(), body.len().to_string());
+        } else {
+            headers.insert("Content-Length".to_string(), 0.to_string());
+        }
+
+        headers.insert("Server".to_string(), "My Rust Http Server/0.1".to_string());
+        headers.insert("Date".to_string(),
+                       Utc::now()
+                           .format_with_items(StrftimeItems::new("%a, %d %b %Y %H:%M:%S GMT"))
+                           .to_string()
+        );
+
+        let concat_headers = headers.into_iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect::<Vec<String>>()
+            .join("\r\n");
+
+        writer_buffer.put(concat_headers.as_bytes());
+        writer_buffer.put("\r\n\r\n".as_bytes());
+
+        if let Some(body) = maybe_body {
+            writer_buffer.put(body);
+        }
+
         // Don't call write(...) to prevent partial write.
-        self.writer.write_all(total.as_bytes()).await?;
+        self.writer.write_all(writer_buffer.as_ref()).await?;
         self.writer.flush().await?;
 
         Ok(())

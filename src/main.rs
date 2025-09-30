@@ -11,16 +11,18 @@ mod http_connection_context;
 mod http_request_context;
 
 use anyhow::Result;
-use crate::dispatcher::{Method};
+use crate::http_type::{Method};
 use crate::http_object::{HttpRequest, HttpResponse};
 
-fn hello_test(req: HttpRequest, res: HttpResponse) -> Result<HttpResponse> {
+fn hello_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("hello test");
+    res.set_body("Expected This Body".to_string());
     Ok(res)
 }
 
-fn ballo_test(req: HttpRequest, res: HttpResponse) -> Result<HttpResponse> {
+fn ballo_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("ballo test");
+    res.set_body("I don't know.".to_string());
     Ok(res)
 }
 

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::io::BufRead;
-use anyhow::{Result, bail, Context};
+use std::str::FromStr;
+use anyhow::{Result, bail, Context, anyhow};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::tcp::{OwnedReadHalf};
-use crate::dispatcher::Method;
 use crate::connection_reader::HttpConnectionContext::HTTP1Context;
 use crate::http_connection_context::{Http1ConnectionContextBuilder, Http1ConnectionContext};
 use crate::http_request_context::{Http1RequestContextBuilder};
-
+use crate::http_type::Method;
 
 pub trait HttpConnectionReader {
 
@@ -35,11 +35,12 @@ impl Http1Handler {
             if line.is_empty() {
                 break;
             }
-            let mut kv = line.split(": ");
+            // Don't use line.split(": ") because of invalid request
+            let mut kv = line.splitn(2, ':');
             match (kv.next(), kv.next()) {
                 (Some(key), Some(value)) =>
-                    headers.insert(key.to_ascii_lowercase().to_string(),
-                                   value.to_string()),
+                    headers.insert(key.trim().to_ascii_lowercase().to_string(),
+                                   value.trim().to_string()),
                 _ => continue
             };
         }
@@ -83,15 +84,8 @@ impl HttpConnectionReader for Http1Handler {
 
         if let Ok((method, path, version)) = self.parse_preface(preface_message) {
             println!("method: {}, path: {}, version: {}", method, path, version);
-            let method_enum = match method.as_str() {
-                "GET"    => Method::GET,
-                "POST"   => Method::POST,
-                "DELETE" => Method::DELETE,
-                "PUT"    => Method::PUT,
-                _        => Method::UNSUPPORTED
-            };
             req_ctx_builder
-                .method(method_enum)
+                .method(method.parse().map_err(|_| anyhow!("invalid HTTP method"))?)
                 .path(path)
                 .version(version);
         }

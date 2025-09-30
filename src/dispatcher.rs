@@ -7,6 +7,7 @@ use crate::http_object::{HttpRequest, HttpResponse};
 
 use anyhow::{bail, Result};
 use crate::http_status::HttpStatus;
+use crate::http_type::Method;
 
 pub struct Dispatcher {
     router: Router
@@ -70,15 +71,6 @@ struct Router {
     delete_routes: HashMap<String, Handler>,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum Method {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    UNSUPPORTED,
-}
-
 impl Router {
 
     pub fn new() -> Router {
@@ -96,7 +88,6 @@ impl Router {
             Method::POST => Some(&self.post_routes),
             Method::PUT => Some(&self.put_routes),
             Method::DELETE => Some(&self.delete_routes),
-            Method::UNSUPPORTED => None,
         };
 
         if let Some(routes) = maybe_routes {
