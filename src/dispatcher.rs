@@ -53,7 +53,7 @@ impl Dispatcher {
             HttpConnectionContext::HTTP1Context(ctx) => {
                 let req: HttpRequest = ctx.clone_req_ctx().into();
                 if let Some(handler) = self.router.find(req.method, req.path.as_str()) {
-                    Ok(handler(req, HttpResponse::new()).await?)
+                    handler(req, HttpResponse::new()).await
                 }
                 else {
                     Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
