@@ -2,8 +2,8 @@
 
 
 enum EncodingType {
-    UTF_8,
-    UNKNOWN,
+    Utf8,
+    Unknown,
 }
 
 trait HeaderParse {
