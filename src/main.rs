@@ -9,18 +9,19 @@ mod http_status;
 mod parse_header;
 mod http_connection_context;
 mod http_request_context;
+mod http_11_headers;
 
 use anyhow::Result;
 use crate::http_type::{Method};
 use crate::http_object::{HttpRequest, HttpResponse};
 
-fn hello_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
+async fn hello_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("hello test");
     res.set_body("Expected This Body".to_string());
     Ok(res)
 }
 
-fn ballo_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
+async fn ballo_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("ballo test");
     res.set_body("I don't know.".to_string());
     Ok(res)

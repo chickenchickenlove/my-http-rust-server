@@ -1,10 +1,12 @@
+use std::future::Future;
 use std::sync::Arc;
 use crate::dispatcher::{Dispatcher, Handler};
 use crate::http_type::Method;
-use tokio::net::{TcpListener};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::{spawn};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::TcpListenerStream;
+use crate::http_object::{HttpRequest, HttpResponse};
 
 pub struct ServerBuilder<'a> {
     host: Option<&'a str>,
@@ -33,8 +35,15 @@ impl <'a> ServerBuilder<'a> {
         self
     }
 
-    pub fn add(&mut self, method: Method, path: &str, handler: Handler) -> anyhow::Result<&mut Self>{
-        self.dispatcher.add(method, path, handler)?;
+    pub fn add<F, Fut>(&mut self, method: Method, path: &str, handler: F) -> anyhow::Result<&mut Self>
+    where
+        F: Fn(HttpRequest, HttpResponse) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<HttpResponse>> + Send + 'static
+    {
+        let closure: Handler = Arc::new(
+            move |req, res|  Box::pin(handler(req, res))
+        );
+        self.dispatcher.add(method, path, closure)?;
         Ok(self)
     }
 
