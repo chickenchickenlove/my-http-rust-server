@@ -19,3 +19,15 @@ $ curl
 
 
 ```
+
+
+### HTTP/2
+```shell
+$ brew install h2spec
+$ cd http_h2
+$ python main.py
+...
+
+$ h2spec -p 8080 -h localhost -P /hello
+$ h2spec -p 8080 -h localhost -P /hello generic/1  
+```

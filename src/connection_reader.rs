@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::io::BufRead;
+use std::ptr::read;
 use anyhow::{Result, bail, Context, anyhow};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use bytes::{Buf, BytesMut};
+use fluke_buffet::bufpool::{BufMut};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use tokio::net::tcp::{OwnedReadHalf};
 use crate::connection_reader::HttpConnectionContext::{HTTP1Context, HTTP11Context};
 use crate::http_connection_context::{ConnectionContextBuilder, Http1ConnectionContext, Http11ConnectionContext, ConnectionContext};
@@ -11,6 +14,14 @@ use crate::http_request_context::{
     Http11RequestContext,
     RequestContextBuilder
 };
+
+use fluke_buffet::Roll;
+use fluke_h2_parse::{
+    preface,
+    Frame,
+};
+use fluke_h2_parse::nom::IResult;
+use crate::frame_handler::FrameHandle;
 
 pub trait HttpConnectionReader {
 
@@ -174,6 +185,85 @@ impl HttpConnectionReader for Http11Handler {
 
 }
 
+
+pub struct Http2Handler {}
+
+impl Http2Handler {
+
+    pub fn new() -> Self {
+        Http2Handler {}
+    }
+
+    pub async fn hello(&self) {
+
+    }
+    pub async fn handle(&mut self,
+                        pre_buf: &[u8],
+                        reader: &mut BufReader<OwnedReadHalf>) -> Result<()> {
+        let mut bytes_mut = BytesMut::with_capacity(16 * 1024);
+        let mut preface_removed = false;
+        let mut updated_frame = None;
+
+        bytes_mut.extend_from_slice(pre_buf);
+
+        loop {
+            reader
+                .read_buf(&mut bytes_mut)
+                .await?;
+
+            if !preface_removed {
+                let mut bm = BufMut::alloc().expect("buf alloc");
+                let (mut preface_buf, _) = bm.split_at(bytes_mut.len());
+
+                preface_buf.copy_from_slice(
+                    &bytes_mut[..bytes_mut.len()]
+                );
+
+                let roll: Roll = preface_buf
+                    .freeze()
+                    .into();
+
+                match preface(roll) {
+                    Ok((rest, _magic)) => {
+                        println!("ASH hello rest : {:?}, magic: {:?}", rest, _magic);
+                        bytes_mut.advance(bytes_mut.len() - rest.len());
+                        preface_removed = true;
+                    }
+                    Err(e) => {
+                        println!("HERE :{:?}", e)
+                    }
+                }
+            }
+            else {
+                let mut bm = BufMut::alloc().expect("buf alloc");
+                let (mut buf, _) = bm.split_at(bytes_mut.len());
+
+                buf.copy_from_slice(
+                    &bytes_mut[..bytes_mut.len()]
+                );
+
+                let roll: Roll = buf
+                    .freeze()
+                    .into();
+
+                match Frame::parse(roll) {
+                    Ok((rest, frame)) => {
+                        println!("HERE :{:?}, frame: {:?}", rest, frame);
+                        updated_frame.replace(frame);
+                        bytes_mut.advance(bytes_mut.len() - rest.len());
+                    }
+                    Err(e) => {
+                        println!("HERE :{:?}", e)
+                    }
+                }
+            }
+
+            if let Some(ref f) = updated_frame{
+                FrameHandle::new().handle(f).await;
+            }
+        }
+    }
+}
 
 pub enum HttpConnectionContext {
     HTTP1Context(Http1ConnectionContext),

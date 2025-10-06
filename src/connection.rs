@@ -1,14 +1,29 @@
-use anyhow::{bail, Result};
+use anyhow::{
+    bail,
+    Result
+};
 use chrono::{Utc};
 use chrono::format::strftime::StrftimeItems;
-use bytes::{BufMut, BytesMut};
-use crate::connection_reader::{Http1Handler, Http11Handler, HttpConnectionReader, HttpConnectionContext};
-
+use bytes::{BufMut, Bytes, BytesMut};
 use tokio::net::{TcpStream};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{
+    AsyncBufReadExt,
+    AsyncWriteExt,
+    BufReader, BufWriter
+};
+use tokio::net::tcp::{
+    OwnedReadHalf,
+    OwnedWriteHalf};
+
 use crate::http_object::HttpResponse;
 use crate::http_type::HttpProtocol;
+use crate::connection_reader::{
+    Http1Handler,
+    Http11Handler,
+    Http2Handler,
+    HttpConnectionReader,
+    HttpConnectionContext
+};
 
 pub struct ConnectionOwner {
     reader: BufReader<OwnedReadHalf>,
@@ -41,7 +56,7 @@ impl ConnectionOwner {
         loop {
             let read_size = self.reader.read_until(b'\n', &mut read_buf).await?;
             if read_size > 0 {
-                client_protocol = verify_protocol(&read_buf);
+                client_protocol = verify_protocol(read_buf.as_slice());
                 break;
             }
         }
@@ -78,6 +93,11 @@ impl ConnectionOwner {
                 }
             }
             HttpProtocol::HTTP2 => {
+                    // println!("{}", preface_message);
+                    Http2Handler::new()
+                        .handle(read_buf.as_slice(), &mut self.reader)
+                        .await?;
+
                 // Don't call write(...) to prevent partial write.
                 self.writer.write_all("Currently HTTP/2 is unsupported.\n".to_string().as_bytes()).await?;
                 self.writer.flush().await?;
@@ -147,9 +167,9 @@ impl ConnectionOwner {
 }
 
 
-fn verify_protocol(message: &Vec<u8>) -> HttpProtocol {
+fn verify_protocol(message: &[u8]) -> HttpProtocol {
     println!("{:?}", message);
-    if message.starts_with(b"PRI * HTTP/2.0") {
+    if message.starts_with(b"PRI * HTTP/2.0\r\n") {
         HttpProtocol::HTTP2
     }
     else if message.ends_with(b"HTTP/1.0\r\n") {
