@@ -15,13 +15,13 @@ use anyhow::Result;
 use crate::http_type::{Method};
 use crate::http_object::{HttpRequest, HttpResponse};
 
-async fn hello_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
+async fn hello_test(_req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("hello test");
     res.set_body("Expected This Body".to_string());
     Ok(res)
 }
 
-async fn ballo_test(req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
+async fn ballo_test(_req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("ballo test");
     res.set_body("I don't know.".to_string());
     Ok(res)

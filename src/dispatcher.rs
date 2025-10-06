@@ -160,7 +160,6 @@ impl Router {
             Method::POST   => Ok(&mut self.post_routes),
             Method::PUT    => Ok(&mut self.put_routes),
             Method::DELETE => Ok(&mut self.delete_routes),
-            _              => bail!("failed to find handler to dispatch for method: {:?}", method)
         }
     }
 

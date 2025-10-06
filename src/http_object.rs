@@ -14,7 +14,11 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    fn new(method: Method, path: String, protocol: HttpProtocol, headers: HashMap<String, String>, body: Option<Bytes>) -> Self {
+    fn new(method: Method,
+           path: String,
+           protocol: HttpProtocol,
+           headers: HashMap<String, String>,
+           body: Option<Bytes>) -> Self {
         HttpRequest { method, path, protocol, headers, body }
     }
 }
@@ -22,14 +26,14 @@ impl HttpRequest {
 
 impl From<Http1RequestContext> for HttpRequest {
     fn from(ctx: Http1RequestContext) -> Self {
-        let (method, path, version, headers, body) = ctx.into_part();
+        let (method, path, headers, body) = ctx.into_part();
         HttpRequest::new(method, path, HTTP1, headers, body)
     }
 }
 
 impl From<Http11RequestContext> for HttpRequest {
     fn from(ctx: Http11RequestContext) -> Self {
-        let (method, path, version, headers, body) = ctx.into_part();
+        let (method, path, headers, body) = ctx.into_part();
         HttpRequest::new(method, path, HTTP11, headers, body)
     }
 }
