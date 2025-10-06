@@ -112,7 +112,7 @@ impl From<HttpStatus> for String {
             HttpStatus::RequestTimeout => "Request Timeout".to_string(),
             HttpStatus::Gone => "Gone".to_string(),
             HttpStatus::LengthRequired => "Length Required".to_string(),
-            HttpStatus::ContentTooLarge => "Content Length Large".to_string(),
+            HttpStatus::ContentTooLarge => "Payload Too Large".to_string(),
             HttpStatus::UnSupportedMediaType => "Unsupported Media Type".to_string(),
             HttpStatus::TooEarly => "Too Early".to_string(),
             HttpStatus::TooManyRequests => "Too Many Requests".to_string(),

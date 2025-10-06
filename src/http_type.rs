@@ -4,6 +4,7 @@ use std::str::FromStr;
 #[derive(Debug)]
 pub enum HttpProtocol {
     HTTP1,
+    HTTP11,
     HTTP2,
     INVALID,
 }

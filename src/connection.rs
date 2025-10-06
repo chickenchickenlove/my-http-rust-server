@@ -1,9 +1,8 @@
-use std::ptr::write;
 use anyhow::{bail, Result};
-use chrono::{Utc, DateTime};
+use chrono::{Utc};
 use chrono::format::strftime::StrftimeItems;
-use bytes::{BufMut, Bytes, BytesMut};
-use crate::connection_reader::{Http1Handler, HttpConnectionReader, HttpConnectionContext};
+use bytes::{BufMut, BytesMut};
+use crate::connection_reader::{Http1Handler, Http11Handler, HttpConnectionReader, HttpConnectionContext};
 
 use tokio::net::{TcpStream};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -28,6 +27,13 @@ impl ConnectionOwner {
         Self { reader, writer }
     }
 
+    pub async fn shutdown(mut self) -> () {
+        if let Err(E) = self.writer.shutdown().await {
+            println!("failed to shutdown writer because of {} maybe, it will be drop.", E);
+        }
+        // drop(self.reader);
+    }
+
     pub async fn handle(&mut self) -> Result<HttpConnectionContext> {
         let mut read_buf = Vec::with_capacity(1024);
 
@@ -44,6 +50,7 @@ impl ConnectionOwner {
 
         let conn_context = match client_protocol {
             HttpProtocol::HTTP1 => {
+                println!("HTTP1 Protocol established");
                 if let Ok(preface_message) = String::from_utf8(read_buf) {
                     Http1Handler::new()
                         .handle(preface_message.as_str(), &mut self.reader)
@@ -51,7 +58,21 @@ impl ConnectionOwner {
                 }
                 else {
                     // Don't call write(...) to prevent partial write.
-                    self.writer.write_all("Invalid HTTP1 preface message\n".to_string().as_bytes()).await?;
+                    self.writer.write_all("Invalid HTTP 1 preface message\n".to_string().as_bytes()).await?;
+                    self.writer.flush().await?;
+                    bail!("Invalid HTTP1 preface message\n")
+                }
+            }
+            HttpProtocol::HTTP11 => {
+                println!("HTTP/1.1 Protocol established");
+                if let Ok(preface_message) = String::from_utf8(read_buf) {
+                    Http11Handler::new()
+                        .handle(preface_message.as_str(), &mut self.reader)
+                        .await?
+                }
+                else {
+                    // Don't call write(...) to prevent partial write.
+                    self.writer.write_all("Invalid HTTP 1.1 preface message\n".to_string().as_bytes()).await?;
                     self.writer.flush().await?;
                     bail!("Invalid HTTP1 preface message\n")
                 }
@@ -81,7 +102,7 @@ impl ConnectionOwner {
     // Connection: keep-alive
     //
     // Hello, World!
-    pub async fn response(&mut self, res: HttpResponse) -> Result<()>{
+    pub async fn response(&mut self, res: HttpResponse, should_close: bool) -> Result<()>{
         let mut writer_buffer = BytesMut::new();
         let (http_status, mut headers, mut maybe_body) = res.into_parts();
 
@@ -96,6 +117,7 @@ impl ConnectionOwner {
             headers.insert("Content-Length".to_string(), 0.to_string());
         }
 
+        headers.insert("Connection".to_string(), (if should_close { "close" } else { "keep-alive" }).to_string());
         headers.insert("Server".to_string(), "My Rust Http Server/0.1".to_string());
         headers.insert("Date".to_string(),
                        Utc::now()
@@ -130,11 +152,11 @@ fn verify_protocol(message: &Vec<u8>) -> HttpProtocol {
     if message.starts_with(b"PRI * HTTP/2.0") {
         HttpProtocol::HTTP2
     }
-    else if message.ends_with(b"HTTP/1\r\n") {
+    else if message.ends_with(b"HTTP/1.0\r\n") {
         HttpProtocol::HTTP1
     }
     else if message.ends_with(b"HTTP/1.1\r\n") {
-        HttpProtocol::HTTP1
+        HttpProtocol::HTTP11
     }
     else {
         HttpProtocol::INVALID

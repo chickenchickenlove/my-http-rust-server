@@ -9,6 +9,7 @@ mod http_status;
 mod parse_header;
 mod http_connection_context;
 mod http_request_context;
+mod http_11_headers;
 
 use anyhow::Result;
 use crate::http_type::{Method};

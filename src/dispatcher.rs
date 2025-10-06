@@ -9,6 +9,7 @@ use crate::connection_reader::{HttpConnectionContext};
 use crate::http_object::{HttpRequest, HttpResponse};
 
 use anyhow::{bail, Result};
+use crate::http_connection_context::ConnectionContext;
 use crate::http_status::HttpStatus;
 use crate::http_type::Method;
 
@@ -47,35 +48,58 @@ impl Dispatcher {
     // 그리고 dispatcher는 여러곳에서 소유하고
     pub async fn dispatch(&self, tcp_stream: TcpStream) -> Result<()> {
         let mut owner = ConnectionOwner::new(tcp_stream);
-        let conn_context = owner.handle().await?;
 
-        let res: Result<HttpResponse> = match conn_context {
-            HttpConnectionContext::HTTP1Context(ctx) => {
-                let req: HttpRequest = ctx.clone_req_ctx().into();
-                if let Some(handler) = self.router.find(req.method, req.path.as_str()) {
-                    handler(req, HttpResponse::new()).await
+        loop {
+            let mut conn_context = owner.handle().await?;
+            let should_close: bool = match &conn_context {
+                HttpConnectionContext::HTTP1Context(c) => c.should_close(),
+                HttpConnectionContext::HTTP11Context(c) => c.should_close()
+            };
+
+            let res: Result<HttpResponse> = match conn_context {
+                HttpConnectionContext::HTTP1Context(ctx) => {
+                    let req: HttpRequest = ctx.clone_req_ctx().into();
+                    if let Some(handler) = self.router.find(req.method, req.path.as_str()) {
+                        handler(req, HttpResponse::new()).await
+                    }
+                    else {
+                        Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
+                    }
+                },
+                HttpConnectionContext::HTTP11Context(ctx) => {
+                    let req: HttpRequest = ctx.clone_req_ctx().into();
+                    if let Some(handler) = self.router.find(req.method, req.path.as_str()) {
+                        handler(req, HttpResponse::new()).await
+                    }
+                    else {
+                        Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
+                    }
                 }
-                else {
-                    Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
+            };
+
+            let res_future = match res {
+                Ok(r) => {
+                    owner.response(r, should_close)
+                },
+                Err(_e) => {
+                    let mut r = HttpResponse::new();
+                    r.set_status_code(HttpStatus::InternalServerError);
+                    owner.response(r, should_close)
                 }
-            }
-        };
+            };
 
-        let res_future = match res {
-            Ok(r) => {
-                owner.response(r)
-            },
-            Err(_e) => {
-                let mut r = HttpResponse::new();
-                r.set_status_code(HttpStatus::InternalServerError);
-                owner.response(r)
+            if let Err(e) = res_future.await {
+                println!("Error occured {:?}. client may got receive response from server.", e);
             }
-        };
 
-        if let Err(e) = res_future.await {
-            println!("Error occured {:?}. client may got receive response from server.", e);
+
+            if should_close {
+                println!("should close");
+                break
+            }
         }
 
+        owner.shutdown().await;
         Ok(())
     }
 }
