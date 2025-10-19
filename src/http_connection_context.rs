@@ -319,7 +319,7 @@ impl Http2ConnectionContext1 {
 
 
     pub fn decrement_window_size(&mut self, window_size: usize) {
-        self.current_window_size_of_client == window_size as usize;
+        self.current_window_size_of_client -= window_size;
     }
 
     pub fn current_window_size(&mut self) -> usize {

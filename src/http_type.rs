@@ -30,7 +30,7 @@ impl FromStr for Method {
             "DELETE" => Ok(Method::DELETE),
             "PUT"    => Ok(Method::PUT),
             "HEAD"   => Ok(Method::HEAD),
-            _        => Err(anyhow::Error::msg("Invalid HTTP method")),
+            _        => Err(anyhow::Error::msg(format!("Invalid HTTP method: {}", s))),
         }
     }
 }

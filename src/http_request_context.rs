@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::str::FromStr;
-use anyhow::{anyhow, bail};
+use anyhow::{
+    anyhow
+};
 use bytes::Bytes;
 use crate::http_type::Method;
 
@@ -217,7 +219,7 @@ impl TryFrom<RequestContextBuilder<Http2RequestContext>> for Http2RequestContext
         let m = headers.get(":method").ok_or_else(|| anyhow!("missing method."))?.as_str();
         let method: Method = Method::from_str(m)?;
         let path = headers.get(":path").ok_or_else(|| anyhow!("missing path."))?.clone();
-        let host = headers.get(":authority").ok_or_else(|| anyhow!("missing path."))?.clone();
+        let host = headers.get(":authority").ok_or_else(|| anyhow!("missing authority."))?.clone();
         let scheme = headers.get(":scheme").ok_or_else(|| anyhow!("missing scheme."))?.clone();
 
         let body = if let Some(b) = value.body {

@@ -25,7 +25,6 @@ use crate::http_object::{HttpRequest, HttpResponse};
 
 async fn hello_test(_req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("hello test");
-    // res.set_body("Expected This Body".to_string());
     Ok(res)
 }
 
