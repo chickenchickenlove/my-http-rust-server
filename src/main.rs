@@ -10,7 +10,14 @@ mod parse_header;
 mod http_connection_context;
 mod http_request_context;
 mod http_11_headers;
-mod frame_handler;
+use crate::http2::{
+    common_frame_handler,
+    common_frame_facade,
+    http2_frame,
+    http2_stream,
+};
+mod network_connector;
+mod http2;
 
 use anyhow::Result;
 use crate::http_type::{Method};
@@ -18,7 +25,6 @@ use crate::http_object::{HttpRequest, HttpResponse};
 
 async fn hello_test(_req: HttpRequest, mut res: HttpResponse) -> Result<HttpResponse> {
     println!("hello test");
-    res.set_body("Expected This Body".to_string());
     Ok(res)
 }
 
@@ -49,6 +55,8 @@ async fn main() -> Result<()> {
     server_builder.host("127.0.0.1")
         .port(8080)
         .add(Method::GET, "/hello", hello_test)?
+        .add(Method::HEAD, "/hello", hello_test)?
+        .add(Method::POST, "/hello", hello_test)?
         .add(Method::GET, "/ballo", ballo_test)?;
 
     let mut server = server_builder.build();

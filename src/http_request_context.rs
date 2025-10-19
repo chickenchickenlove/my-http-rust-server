@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::str::FromStr;
 use anyhow::{
     anyhow
 };
@@ -22,11 +23,15 @@ pub struct Http11RequestContext {
     body: Option<Bytes>
 }
 
+
+
 pub trait RequestContext { }
 
 
 impl RequestContext for Http1RequestContext { }
 impl RequestContext for Http11RequestContext { }
+
+
 
 impl Http1RequestContext {
 
@@ -171,5 +176,59 @@ impl TryFrom<RequestContextBuilder<Http11RequestContext>> for Http11RequestConte
         };
 
         Ok(Http11RequestContext::new(method, path, headers, body))
+    }
+}
+
+
+#[derive(Debug, Clone)]
+pub struct Http2RequestContext {
+    scheme: String,
+    host: String,
+    method: Method,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Option<Bytes>,
+}
+
+
+impl Http2RequestContext {
+
+    pub fn new(method: Method,
+               path: String,
+               scheme: String,
+               host: String,
+               headers: HashMap<String, String>,
+               body: Option<Bytes>) -> Self {
+        Http2RequestContext { scheme, host, method, path, headers, body }
+    }
+
+    pub fn into_part(self) -> (Method, String, HashMap<String, String>, Option<Bytes>) {
+        (self.method, self.path, self.headers, self.body)
+    }
+
+
+}
+
+impl TryFrom<RequestContextBuilder<Http2RequestContext>> for Http2RequestContext {
+    type Error = anyhow::Error;
+
+    fn try_from(value: RequestContextBuilder<Http2RequestContext>) -> Result<Self, Self::Error> {
+
+        let headers = value.headers.ok_or_else(|| anyhow!("missing headers."))?;
+
+        let m = headers.get(":method").ok_or_else(|| anyhow!("missing method."))?.as_str();
+        let method: Method = Method::from_str(m)?;
+        let path = headers.get(":path").ok_or_else(|| anyhow!("missing path."))?.clone();
+        let host = headers.get(":authority").ok_or_else(|| anyhow!("missing authority."))?.clone();
+        let scheme = headers.get(":scheme").ok_or_else(|| anyhow!("missing scheme."))?.clone();
+
+        let body = if let Some(b) = value.body {
+            let body_byte: Bytes = b.into();
+            Some(body_byte)
+        } else {
+            None
+        };
+
+        Ok(Http2RequestContext::new(method, path, scheme, host, headers, body))
     }
 }

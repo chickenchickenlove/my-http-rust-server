@@ -1,7 +1,4 @@
-use anyhow::{
-    bail,
-    Result
-};
+use anyhow::{anyhow, bail, Result};
 use chrono::{Utc};
 use chrono::format::strftime::StrftimeItems;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -18,17 +15,28 @@ use tokio::net::tcp::{
 use crate::http_object::HttpResponse;
 use crate::http_type::HttpProtocol;
 use crate::connection_reader::{
-    Http1Handler,
-    Http11Handler,
-    Http2Handler,
-    HttpConnectionReader,
-    HttpConnectionContext
+    HttpConnectionContext1
+};
+use crate::http_connection_context::{
+    Http11ConnectionContext1,
+    Http1ConnectionContext1,
+    Http2ConnectionContext1
 };
 
 pub struct ConnectionOwner {
     reader: BufReader<OwnedReadHalf>,
     writer: BufWriter<OwnedWriteHalf>,
 }
+
+pub struct PrefaceMessage(pub Bytes);
+
+
+impl PrefaceMessage {
+    pub fn with(preface_message: impl Into<Bytes>) -> Self {
+        PrefaceMessage { 0 : preface_message.into() }
+    }
+}
+
 
 impl ConnectionOwner {
 
@@ -42,76 +50,56 @@ impl ConnectionOwner {
         Self { reader, writer }
     }
 
+    pub fn with(tcp_stream: TcpStream) -> Self {
+        // TcpStream을 Reader / Writer 모두에게 소유권을 줄 수 없음.
+        let (read_half, write_half) = tcp_stream.into_split();
+
+        let reader = BufReader::new(read_half);
+        let writer = BufWriter::new(write_half);
+        Self { reader, writer }
+    }
+
+    pub fn into_parts(self) -> (BufReader<OwnedReadHalf>, BufWriter<OwnedWriteHalf>) {
+        ( self.reader, self.writer )
+    }
+
+    pub fn reader(&mut self) -> &mut BufReader<OwnedReadHalf> {
+        &mut self.reader
+    }
+
+    pub fn writer(&mut self) -> &mut BufWriter<OwnedWriteHalf> {
+        &mut self.writer
+    }
+
     pub async fn shutdown(mut self) -> () {
         if let Err(E) = self.writer.shutdown().await {
             println!("failed to shutdown writer because of {} maybe, it will be drop.", E);
         }
-        // drop(self.reader);
     }
 
-    pub async fn handle(&mut self) -> Result<HttpConnectionContext> {
+    pub async fn create_connection_context(&mut self) -> Result<(HttpConnectionContext1, PrefaceMessage)> {
         let mut read_buf = Vec::with_capacity(1024);
 
-        let client_protocol;
-        loop {
+        let mut client_protocol = None;
+
+        while let None = client_protocol {
+            // read_until(...).await가 Ok(0)을 돌려주는 건 “느리다”가 아니라 진짜 EOF(연결이 닫힘)임.
             let read_size = self.reader.read_until(b'\n', &mut read_buf).await?;
             if read_size > 0 {
                 client_protocol = verify_protocol(read_buf.as_slice());
-                break;
             }
         }
 
-        println!("client_protocol: {:?}", client_protocol);
-
-        let conn_context = match client_protocol {
-            HttpProtocol::HTTP1 => {
-                println!("HTTP1 Protocol established");
-                if let Ok(preface_message) = String::from_utf8(read_buf) {
-                    Http1Handler::new()
-                        .handle(preface_message.as_str(), &mut self.reader)
-                        .await?
-                }
-                else {
-                    // Don't call write(...) to prevent partial write.
-                    self.writer.write_all("Invalid HTTP 1 preface message\n".to_string().as_bytes()).await?;
-                    self.writer.flush().await?;
-                    bail!("Invalid HTTP1 preface message\n")
-                }
-            }
-            HttpProtocol::HTTP11 => {
-                println!("HTTP/1.1 Protocol established");
-                if let Ok(preface_message) = String::from_utf8(read_buf) {
-                    Http11Handler::new()
-                        .handle(preface_message.as_str(), &mut self.reader)
-                        .await?
-                }
-                else {
-                    // Don't call write(...) to prevent partial write.
-                    self.writer.write_all("Invalid HTTP 1.1 preface message\n".to_string().as_bytes()).await?;
-                    self.writer.flush().await?;
-                    bail!("Invalid HTTP1 preface message\n")
-                }
-            }
-            HttpProtocol::HTTP2 => {
-                    // println!("{}", preface_message);
-                    Http2Handler::new()
-                        .handle(read_buf.as_slice(), &mut self.reader)
-                        .await?;
-
-                // Don't call write(...) to prevent partial write.
-                self.writer.write_all("Currently HTTP/2 is unsupported.\n".to_string().as_bytes()).await?;
-                self.writer.flush().await?;
-                bail!("Currently HTTP/2 is unsupported.\n")
-            }
-            HttpProtocol::INVALID => {
-                // Don't call write(...) to prevent partial write.
-                self.writer.write_all("Invalid Protocol\n".to_string().as_bytes()).await?;
-                self.writer.flush().await?;
-                bail!("Unsupported Protocol or Invalid protocol")
-            }
+        let connection_context: HttpConnectionContext1 = match client_protocol.unwrap() {
+            HttpProtocol::HTTP1 => HttpConnectionContext1::HTTP1Context(Http1ConnectionContext1::new()),
+            HttpProtocol::HTTP11 => HttpConnectionContext1::HTTP11Context(Http11ConnectionContext1::new()),
+            HttpProtocol::HTTP2 => HttpConnectionContext1::HTTP2Context(Http2ConnectionContext1::new()),
+            _ => bail!("Failed to"),
         };
 
-        Ok(conn_context)
+        let preface_message = PrefaceMessage::with(read_buf);
+
+        Ok((connection_context, preface_message))
     }
 
     // HTTP/1.1 200 OK
@@ -167,18 +155,18 @@ impl ConnectionOwner {
 }
 
 
-fn verify_protocol(message: &[u8]) -> HttpProtocol {
-    println!("{:?}", message);
+fn verify_protocol(message: &[u8]) -> Option<HttpProtocol> {
+    println!("message: {:?}", message);
     if message.starts_with(b"PRI * HTTP/2.0\r\n") {
-        HttpProtocol::HTTP2
+        Some(HttpProtocol::HTTP2)
     }
     else if message.ends_with(b"HTTP/1.0\r\n") {
-        HttpProtocol::HTTP1
+        Some(HttpProtocol::HTTP1)
     }
     else if message.ends_with(b"HTTP/1.1\r\n") {
-        HttpProtocol::HTTP11
+        Some(HttpProtocol::HTTP11)
     }
     else {
-        HttpProtocol::INVALID
+        None
     }
 }
