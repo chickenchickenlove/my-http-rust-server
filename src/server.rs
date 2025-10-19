@@ -17,6 +17,7 @@ use crate::http_object::{
     HttpRequest,
     HttpResponse
 };
+use crate::network_connector::NetworkConnector;
 
 pub struct ServerBuilder<'a> {
     host: Option<&'a str>,
@@ -91,9 +92,11 @@ impl Server {
                     // 해결은 “소유”하도록 해야한다.
                     // 즉, Arc<Dispatcher>를 값으로 async move 태스크에 옮겨 담으면 그 Future는 더 이상 외부 스택을 참조하지 않으므로 'static 요구를 만족합니다.
                     // Arc를 소유권으로 캡처하면서 빌림을 없애기 때문에 그 Future가 'static이 되는것임.
-                    let _join_handle = spawn(async move {
-                        dis.dispatch(tcp_stream).await});
 
+                    let connector = NetworkConnector::with(dis);
+                    let _join_handle = spawn(async move {
+                        connector.handle(tcp_stream).await
+                    });
                 },
                 Err(err) => {
                     println!("Failed to establish connection: {}", err);

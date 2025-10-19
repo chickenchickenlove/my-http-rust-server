@@ -3,7 +3,7 @@ use bytes::Bytes;
 use crate::http_type::{HttpProtocol, Method};
 use crate::http_status::HttpStatus;
 use crate::http_type::HttpProtocol::{HTTP1, HTTP11};
-use crate::http_request_context::{Http1RequestContext, Http11RequestContext};
+use crate::http_request_context::{Http1RequestContext, Http11RequestContext, Http2RequestContext};
 
 pub struct HttpRequest {
     pub method: Method,
@@ -33,6 +33,13 @@ impl From<Http1RequestContext> for HttpRequest {
 
 impl From<Http11RequestContext> for HttpRequest {
     fn from(ctx: Http11RequestContext) -> Self {
+        let (method, path, headers, body) = ctx.into_part();
+        HttpRequest::new(method, path, HTTP11, headers, body)
+    }
+}
+
+impl From<Http2RequestContext> for HttpRequest {
+    fn from(ctx: Http2RequestContext) -> Self {
         let (method, path, headers, body) = ctx.into_part();
         HttpRequest::new(method, path, HTTP11, headers, body)
     }

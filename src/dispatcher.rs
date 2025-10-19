@@ -3,13 +3,9 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::net::TcpStream;
-use crate::connection::{ConnectionOwner};
-use crate::connection_reader::{HttpConnectionContext};
 use crate::http_object::{HttpRequest, HttpResponse};
 
 use anyhow::{bail, Result};
-use crate::http_connection_context::ConnectionContext;
 use crate::http_status::HttpStatus;
 use crate::http_type::Method;
 
@@ -46,62 +42,23 @@ impl Dispatcher {
     // async dispatch(...)에서 &self가 들어온다. 그리고 이 함수는 spawn(...)에 의해서 생성되는데,
     // spawn(...)은 내부에 있는 모든 인자가 Send + Sync를 구현한 것을 요구한다.
     // 그리고 dispatcher는 여러곳에서 소유하고
-    pub async fn dispatch(&self, tcp_stream: TcpStream) -> Result<()> {
-        let mut owner = ConnectionOwner::new(tcp_stream);
 
-        loop {
-            let mut conn_context = owner.handle().await?;
-            let should_close: bool = match &conn_context {
-                HttpConnectionContext::HTTP1Context(c) => c.should_close(),
-                HttpConnectionContext::HTTP11Context(c) => c.should_close()
-            };
+    // 현재 구조 : Connection 1, Request 1, dispatch 1
+    // 미래 구조 : Connection 1, Request Many, dispatch Many?
+    // Dispatch에 굳이 Connection 레벨이 들어오는게 맞을까?
+    // 필요한 구조....
+    // 1. Connection이 생성된다.
+    // 2. Connection 별로 여러 Request가 생성된다.
+    // 3. Request를 만드는 것은 네트워크 레벨이다.
+    // Request 생성이 완료된 이후에, dispatch를 하는 것이 맞겠다.
 
-            let res: Result<HttpResponse> = match conn_context {
-                HttpConnectionContext::HTTP1Context(ctx) => {
-                    let req: HttpRequest = ctx.clone_req_ctx().into();
-                    if let Some(handler) = self.router.find(req.method, req.path.as_str()) {
-                        handler(req, HttpResponse::new()).await
-                    }
-                    else {
-                        Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
-                    }
-                },
-                HttpConnectionContext::HTTP11Context(ctx) => {
-                    let req: HttpRequest = ctx.clone_req_ctx().into();
-                    if let Some(handler) = self.router.find(req.method, req.path.as_str()) {
-                        handler(req, HttpResponse::new()).await
-                    }
-                    else {
-                        Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
-                    }
-                }
-            };
-
-            let res_future = match res {
-                Ok(r) => {
-                    owner.response(r, should_close)
-                },
-                Err(_e) => {
-                    let mut r = HttpResponse::new();
-                    r.set_status_code(HttpStatus::InternalServerError);
-                    owner.response(r, should_close)
-                }
-            };
-
-            if let Err(e) = res_future.await {
-                println!("Error occured {:?}. client may got receive response from server.", e);
-            }
-
-
-            if should_close {
-                println!("should close");
-                break
-            }
+    pub async fn dispatch(&self, req: HttpRequest) -> Result<HttpResponse> {
+        match self.router.find(req.method, req.path.as_str()) {
+            Some(handler) => handler(req, HttpResponse::new()).await,
+            None                   => Ok(HttpResponse::with_status_code(HttpStatus::NotFound))
         }
-
-        owner.shutdown().await;
-        Ok(())
     }
+
 }
 
 
@@ -111,6 +68,7 @@ struct Router {
     post_routes: HashMap<String, Handler>,
     put_routes: HashMap<String, Handler>,
     delete_routes: HashMap<String, Handler>,
+    head_routes: HashMap<String, Handler>,
 }
 
 impl Router {
@@ -121,6 +79,7 @@ impl Router {
             post_routes: HashMap::new(),
             put_routes: HashMap::new(),
             delete_routes: HashMap::new(),
+            head_routes: HashMap::new(),
         }
     }
 
@@ -130,6 +89,7 @@ impl Router {
             Method::POST => Some(&self.post_routes),
             Method::PUT => Some(&self.put_routes),
             Method::DELETE => Some(&self.delete_routes),
+            Method::HEAD => Some(&self.head_routes),
         };
 
         if let Some(routes) = maybe_routes {
@@ -160,6 +120,7 @@ impl Router {
             Method::POST   => Ok(&mut self.post_routes),
             Method::PUT    => Ok(&mut self.put_routes),
             Method::DELETE => Ok(&mut self.delete_routes),
+            Method::HEAD   => Ok(&mut self.head_routes),
         }
     }
 
