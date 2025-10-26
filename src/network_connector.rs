@@ -22,10 +22,7 @@ use tokio::{
     spawn
 };
 use tokio::net::tcp::OwnedWriteHalf;
-use tokio::sync::{
-    mpsc,
-    oneshot
-};
+use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use crate::connection::{
@@ -64,7 +61,9 @@ use crate::http_object::{HttpRequest, HttpResponse};
 use crate::http_status::HttpStatus;
 
 pub struct NetworkConnector {
-    dispatcher: Arc<Dispatcher>
+    dispatcher: Arc<Dispatcher>,
+    concurrent_dispatch_limit: Arc<Semaphore>,
+
 }
 
 // ConnectionContext가 하나 만들어지면... 그걸 계속 쓴다.
@@ -74,7 +73,10 @@ pub struct NetworkConnector {
 impl NetworkConnector {
 
     pub fn with(dispatcher: Arc<Dispatcher>) -> Self {
-        NetworkConnector { dispatcher: dispatcher.clone()}
+        NetworkConnector {
+            dispatcher: dispatcher.clone(),
+            concurrent_dispatch_limit: Arc::new(Semaphore::new(128)),
+        }
     }
 
     async fn loop_http1(&self,
@@ -266,17 +268,46 @@ impl NetworkConnector {
                     match msg {
                         // Should dispatch with RequestContext.
                         Http2ChannelMessage::RequestContextForDispatch {req_ctx, stream_id} => {
-                            // println!("### Connection Context got Message from stream : {:?}", req);
+
                             let dis = self.dispatcher.clone();
-                            let response = dis.dispatch(req_ctx.into()).await?;
+                            let limiter = self.concurrent_dispatch_limit.clone();
+                            let cancel = conn_ctx.get_stream_token_by_stream_id(stream_id);
+
                             if let Some(tx_to_stream) = conn_ctx.get_sender_to_channel(stream_id) {
-                                println!("### Connection try to send a result of dipstach to stream task.");
-                                tx_to_stream
-                                .send(
-                                    Http2ChannelMessage::ResponseObject { response : response.into() }
-                                )
-                                .await?;
-                            };
+                                let tx = tx_to_stream.clone();
+                                let _join_handle = spawn(async move {
+                                    let _permit = limiter.acquire().await.ok();
+                                    let fut = dis.dispatch(req_ctx.into());
+
+                                    select! {
+                                        // Respect cancel event.
+                                        biased;
+
+                                        _ = cancel.cancelled() => {
+                                            // Stream or Connection already has gone.
+                                            return;
+                                        }
+
+                                        res = fut => {
+                                            match res {
+                                                Ok(r) => {
+                                                    // Ignore Result
+                                                    let _ = tx
+                                                    .send(
+                                                        Http2ChannelMessage::ResponseObject { response: r.into() }
+                                                    )
+                                                    .await;
+
+                                                },
+                                                Err(_e) => {
+                                                    // TODO: If need, we can sen 500 error.
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+
                             Ok(())
                         },
 

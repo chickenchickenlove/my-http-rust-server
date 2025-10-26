@@ -36,10 +36,16 @@ impl RequestContext for Http11RequestContext { }
 impl Http1RequestContext {
 
     fn new(method: Method,
-               path: String,
-               headers: HashMap<String, String>,
-               body: Option<Bytes>) -> Self {
-        Self { method, path, headers, body }
+           path: String,
+           headers: HashMap<String, String>,
+           body: Option<Bytes>
+    ) -> Self {
+        Self {
+            method,
+            path,
+            headers,
+            body
+        }
     }
 
     pub fn into_part(self) -> (Method, String, HashMap<String, String>, Option<Bytes>) {
