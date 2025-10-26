@@ -302,7 +302,12 @@ impl NetworkConnector {
 
                                                 },
                                                 Err(_e) => {
-                                                    // TODO: If need, we can sen 500 error.
+                                                    let res = HttpResponse::with_status_code(HttpStatus::InternalServerError);
+                                                    let _ = tx
+                                                    .send(
+                                                        Http2ChannelMessage::ResponseObject { response: res.into() }
+                                                    )
+                                                    .await;
                                                 }
                                             }
                                         }
