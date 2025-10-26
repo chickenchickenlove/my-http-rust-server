@@ -344,11 +344,6 @@ impl Http2Stream {
     }
 
 
-    // fn handle_header_in_progress(&self) -> bool {
-        // if matches!(self.decoding_header_state, )
-    //
-    // }
-
     fn handle_trailers_in_progress(&self) -> bool {
         if matches!(self.decoding_header_state, DecodingHeaderState::WaitingResponseFromDecoder) ||
            matches!(self.decoding_header_state, DecodingHeaderState::Completed) {
