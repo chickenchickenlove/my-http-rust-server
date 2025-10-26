@@ -276,10 +276,7 @@ impl NetworkConnector {
                             if let Some(tx_to_stream) = conn_ctx.get_sender_to_channel(stream_id) {
                                 let tx = tx_to_stream.clone();
                                 let _join_handle = spawn(async move {
-                                    // Don't put '_' into permit variables.
-                                    // Because, _permit is immediately dropped and it cannot restrict max_concurrent_dispatch.
-
-                                    let permit = limiter.acquire().await.map_err(|_| anyhow!(("Acquire Error")));
+                                    let _permit = limiter.acquire().await.map_err(|_| anyhow!(("Acquire Error")));
                                     let fut = dis.dispatch(req_ctx.into());
 
                                     select! {
@@ -311,8 +308,7 @@ impl NetworkConnector {
                                                 }
                                             };
                                         }
-                                    };
-                                    ()
+                                    }
                                 });
                             }
 
