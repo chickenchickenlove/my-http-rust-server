@@ -278,12 +278,7 @@ impl NetworkConnector {
                                 let _join_handle = spawn(async move {
                                     // Don't put '_' into permit variables.
                                     // Because, _permit is immediately dropped and it cannot restrict max_concurrent_dispatch.
-                                    loop {
-                                        if let Ok(v) = limiter.acquire().await {
-                                            break;
-                                        }
-                                    }
-
+                                    let permit = limiter.acquire().await?
                                     let fut = dis.dispatch(req_ctx.into());
 
                                     select! {
