@@ -4,7 +4,7 @@ use std::sync::{
     Arc
 };
 use std::time::Duration;
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use bytes::{
     Buf,
     Bytes,
@@ -278,7 +278,8 @@ impl NetworkConnector {
                                 let _join_handle = spawn(async move {
                                     // Don't put '_' into permit variables.
                                     // Because, _permit is immediately dropped and it cannot restrict max_concurrent_dispatch.
-                                    let permit = limiter.acquire().await?
+
+                                    let permit = limiter.acquire().await.map_err(|_| anyhow!(("Acquire Error")));
                                     let fut = dis.dispatch(req_ctx.into());
 
                                     select! {
@@ -287,7 +288,7 @@ impl NetworkConnector {
 
                                         _ = cancel.cancelled() => {
                                             // Stream or Connection already has gone.
-                                            return;
+                                            return
                                         }
 
                                         res = fut => {
@@ -299,7 +300,6 @@ impl NetworkConnector {
                                                         Http2ChannelMessage::ResponseObject { response: r.into() }
                                                     )
                                                     .await;
-
                                                 },
                                                 Err(_e) => {
                                                     let res = HttpResponse::with_status_code(HttpStatus::InternalServerError);
@@ -309,9 +309,10 @@ impl NetworkConnector {
                                                     )
                                                     .await;
                                                 }
-                                            }
+                                            };
                                         }
-                                    }
+                                    };
+                                    ()
                                 });
                             }
 
