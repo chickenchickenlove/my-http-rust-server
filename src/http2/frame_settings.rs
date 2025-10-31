@@ -3,6 +3,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fluke_h2_parse::enumflags2::BitFlags;
 use fluke_h2_parse::{Frame, SettingsFlags, StreamId};
 use fluke_h2_parse::FrameType::Settings;
+use tracing::debug;
 use crate::http2::common_frame_facade::h2_frame_to_bytes;
 use crate::http2::common_frame_handler::FrameHandler;
 use crate::http2::http2_conn_options::PartialHttp2ConnectionOptions;
@@ -191,12 +192,10 @@ impl SettingsFrameFacade {
                 _ => {
                     //    An endpoint that receives a SETTINGS frame with any unknown or
                     //    unsupported identifier MUST ignore that setting.
-                    println!("Unknown Options {}, value: {}", k, v);
+                    debug!("Unknown Options key: {}, value: {}", k, v);
                 }
             }
         };
-        println!("ASH Options: {:?}", options);
-
         options
     }
 
@@ -328,7 +327,7 @@ impl FrameHandler for SettingsFrameHandler {
                 conn_ctx.update_options_from_client(facade.options())
             },
             _ => {
-                println!("Unexpected status.");
+                debug!("frame handler got unexpected frame. it expects settings frame, but actual : {:?}", frame);
             }
         }
 

@@ -13,6 +13,7 @@ use tokio::task::{
 };
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::TcpListenerStream;
+use tracing::info;
 use crate::http_object::{
     HttpRequest,
     HttpResponse
@@ -78,6 +79,7 @@ pub struct Server {
 impl Server {
 
     pub async fn serve(&mut self) -> anyhow::Result<()> {
+        info!("start?");
 
         let addr = format!("{}:{}", self.host, self.port);
         let listener = TcpListener::bind(addr).await?;

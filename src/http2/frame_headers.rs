@@ -15,6 +15,7 @@ use fluke_h2_parse::enumflags2::{
     BitFlag,
     BitFlags
 };
+use tracing::{debug, warn};
 use crate::http2::common_frame_facade::{
     h2_frame_to_bytes,
     FrameFacade
@@ -267,8 +268,11 @@ impl FrameHandler for HeadersFrameHandler {
             return Err(Http2Error::connection_error(ErrorCode::ProtocolError).into())
         }
 
-        println!("conn_ctx.get_max_concurrent_streams_from_me() > conn_ctx.get_active_streams_count() + 1 : {}", conn_ctx.get_max_concurrent_streams_from_me() > conn_ctx.get_active_streams_count() + 1);
         if conn_ctx.get_active_streams_count() + 1 > conn_ctx.get_max_concurrent_streams_from_me() {
+            debug!("max concurrent count reach to limit. max stream count: {}, current active stream count : {}",
+                conn_ctx.get_max_concurrent_streams_from_me(),
+                conn_ctx.get_active_streams_count(),
+            );
             return Err(
                 Http2Error::stream_error(sid, ErrorCode::RefusedStream).into()
             )

@@ -11,7 +11,7 @@ use tokio::io::{
 use tokio::net::tcp::{
     OwnedReadHalf,
     OwnedWriteHalf};
-
+use tracing::debug;
 use crate::http_object::HttpResponse;
 use crate::http_type::HttpProtocol;
 use crate::connection_reader::{
@@ -73,7 +73,7 @@ impl ConnectionOwner {
 
     pub async fn shutdown(mut self) -> () {
         if let Err(E) = self.writer.shutdown().await {
-            println!("failed to shutdown writer because of {} maybe, it will be drop.", E);
+            debug!("failed to shutdown writer because of {}. maybe, it will be dropped.", E);
         }
     }
 

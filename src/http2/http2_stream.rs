@@ -26,6 +26,8 @@ use tokio::sync::mpsc::{
     Receiver
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, info_span, Span, field};
+use tracing::field::debug;
 use FrameFacade::PriorityFrame;
 use crate::http2::common_frame_facade::FrameFacade;
 use crate::http2::common_frame_facade::FrameFacade::{
@@ -292,7 +294,7 @@ impl Http2Stream {
 
     async fn handle_response_object(&mut self, response: Http2Response) -> anyhow::Result<StreamResult>
     {
-        println!("Stream Got Response Object {:?}", response);
+        debug!("stream got response object {:?}", response);
 
         let mut response_frames = Vec::new();
 
@@ -329,8 +331,8 @@ impl Http2Stream {
             response_frames.push(data_frame);
         }
         else {
-            println!("couldn't send a frame because of window size. client window size: {}, payload_size: {}",
-                     self.window_about_client, data_payload_size
+            debug!("stream couldn't send a frame because of window size. client windoe size: {}, payload size: {}",
+                self.window_about_client, data_payload_size
             );
             self.pending_frames.push_back(data_frame);
         }
@@ -459,7 +461,7 @@ impl Http2Stream {
             self.dispatched = true;
             let request_ctx = ctx_builder.build()?;
 
-            println!("### Stream try to send request context to connection. {:?}", request_ctx);
+            debug!("stream try to send a request context to connection process. {:?}", request_ctx);
             self.send_request_ctx(request_ctx).await?
         }
 
@@ -540,8 +542,7 @@ impl Http2Stream {
     // TODO: 2. RequestCtx 만드는 부분, Frame을 받는 부분을 굳이 나눌 필요가 있는지.
     // TODO: 3. Inflight Header Frame -> 조립
     pub async fn serve(mut self) -> anyhow::Result<()> {
-        println!("Starting to serve stream {}", self.stream_id);
-
+        info!("the stream starts to serve.");
         loop {
             if self.should_terminate_stream {
                 break;
@@ -553,6 +554,9 @@ impl Http2Stream {
             self.response_to_client_if_possible().await?;
 
             let result = select! {
+                // respect cancel first.
+                biased;
+
                 // Task #1 : Graceful shutdown
                 _ = self.cancellation_token.cancelled() => {
                     self.should_terminate_stream = true;
@@ -561,7 +565,7 @@ impl Http2Stream {
 
                 // Task #2 : From Connection
                 Some(msg) = self.receiver_from_conn.recv() => {
-                    println!("### STREAM GOT MSG : {:?}", msg);
+                    debug!("Received Messages : {:?}", msg);
                     match msg {
                         // #1 : Message for Request.
                         Http2ChannelMessage::FrameForRequest { frame } => self.handle_frame_for_request(frame),
@@ -627,7 +631,7 @@ impl Http2Stream {
             }
         }
 
-        println!("Shutting down stream {}", self.stream_id);
+        debug!("Shutting down stream.");
         Ok(())
     }
 
@@ -661,8 +665,6 @@ impl Http2Stream {
     }
 
     fn validate_from_client(&mut self, frame: &FrameFacade) -> anyhow::Result<()>{
-
-        println!("ASH validate_from_client - {:?}, {:?}", self.decoding_header_state, self.decoding_trailers_state);
         if matches!(frame, FrameFacade::ContinuationFrame(_)) &&
         (
             matches!(self.decoding_header_state, DecodingHeaderState::Initial) ||
@@ -847,6 +849,8 @@ impl Http2Stream {
         };
 
         let new_state = self.stream_state;
+        Span::current().record("stream_state", &field::debug(new_state));
+        debug!("State Update.");
         (prev_state, new_state)
     }
 
@@ -1021,7 +1025,7 @@ impl Http2StreamHandler {
             return false;
         }
 
-        println!("### New Stream is created. {:?}", sid);
+        debug!("new stream {} is created.", sid);
         true
     }
 
@@ -1062,3 +1066,14 @@ pub enum StreamResult {
     Error(anyhow::Error),
 }
 
+
+pub fn new_stream_span(sid: u32, init_window_size: u32) -> Span {
+    info_span!(
+        "stream",
+        stream_id=sid,
+        // 1) 생성 시점에 Debug/Display 래퍼로 넣기 (가장 간단)
+        // ? = Debug, % = Display
+        stream_state=?StreamState::Idle,
+        stream_window_size=init_window_size
+    )
+}
