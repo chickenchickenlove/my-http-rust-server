@@ -17,3 +17,4 @@ pub mod frame_continuation;
 pub mod http2_errors;
 pub mod frame_unknown;
 pub mod http2_header_decoder;
+pub mod http2_connection;
