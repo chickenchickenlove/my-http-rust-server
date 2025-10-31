@@ -20,6 +20,8 @@ mod network_connector;
 mod http2;
 
 use anyhow::Result;
+use tracing::{info, span, Instrument};
+use tracing_subscriber::EnvFilter;
 use crate::http_type::{Method};
 use crate::http_object::{HttpRequest, HttpResponse};
 
@@ -34,9 +36,15 @@ async fn ballo_test(_req: HttpRequest, mut res: HttpResponse) -> Result<HttpResp
     Ok(res)
 }
 
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE) // 환경변수 없이 전 레벨 허용
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-
+    init_tracing();
     // #1
     // Dispatcher를 Arc로 넘기다보니, Server를 직접 만들어서 라우팅을 추가하는게 되지 않았다.
     // 따라서 Builder로 처음에 다 준비가 되면, Server를 만들 때 Arc<Dispatcher>로 전달.
@@ -51,6 +59,7 @@ async fn main() -> Result<()> {
     // 해결은 “소유”하도록 해야한다.
     // 즉, Arc<Dispatcher>를 값으로 async move 태스크에 옮겨 담으면 그 Future는 더 이상 외부 스택을 참조하지 않으므로 'static 요구를 만족합니다.
     // Arc를 소유권으로 캡처하면서 빌림을 없애기 때문에 그 Future가 'static이 되는것임.
+    let span = span!(tracing::Level::INFO, "Serverstart");
     let mut server_builder = server::ServerBuilder::new();
     server_builder.host("127.0.0.1")
         .port(8080)
@@ -59,9 +68,14 @@ async fn main() -> Result<()> {
         .add(Method::POST, "/hello", hello_test)?
         .add(Method::GET, "/ballo", ballo_test)?;
 
+    let _enter = span.enter();
+    info!("create server");
     let mut server = server_builder.build();
+    info!("starting server");
+
 
     server
         .serve()
+        .instrument(span.clone())
         .await
 }

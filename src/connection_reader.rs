@@ -34,6 +34,7 @@ use crate::http_request_context::{
 use fluke_buffet::Roll;
 use fluke_h2_parse::{preface, Frame, FrameType};
 use tokio::time::{sleep, timeout};
+use tracing::{debug, warn};
 use crate::connection::PrefaceMessage;
 use crate::http2::common_frame_facade::FrameFacade;
 use crate::http2::common_frame_facade::FrameFacade::ContinuationFrame;
@@ -73,7 +74,6 @@ where
 
         let preface = String::from_utf8(preface_msg.0.to_vec())?;
         if let Ok((method, path, version)) = self.parse_preface(preface.as_str()) {
-            println!("method: {}, path: {}, version: {}", method, path, version);
             req_ctx_builder
                 .method(method.parse().map_err(|_| anyhow!("invalid HTTP method"))?)
                 .path(path);
@@ -98,7 +98,7 @@ where
             .context("Invalid UTF-8 sequence")?;
 
         let headers = self.parse_header(header_string);
-        println!("Header String \n{:?}", headers);
+        debug!("parsed header string \n{:?}", headers);
 
         let maybe_body_length = headers.get("content-length");
         let maybe_body = self.parse_body(reader, maybe_body_length)
@@ -248,7 +248,7 @@ impl Http2Handler {
                     frame
                 }
                 Err(e) => {
-                    println!("Failed to parsing frame from roll. {:?}", e);
+                    warn!("failed to parse frame from Roll. {}", e);
                     bail!("Error");
                 }
             }
@@ -276,7 +276,7 @@ impl Http2Handler {
                              reader: &mut BufReader<OwnedReadHalf>
     ) -> Result<Option<FrameFacade>>
     {
-        println!("HERE: Try to parse frame. ");
+        debug!("try to parse frame.");
         // 9 means Header Frame bytes.
         let frame = {
             let mut read_buf = [0u8; 9];
@@ -284,6 +284,7 @@ impl Http2Handler {
             // Socket이 닫혀있는 경우 Err가 발생한다.
             // 이 부분을 ?로 던지게 되면 Panic이 위로 올라가는 것처럼 나온다.
             if let Err(e) = reader.read_exact(&mut read_buf).await {
+                debug!("maybe, connection already is closed. error {}", e);
                 bail!("Maybe, Connection already is closed. {:?}", e)
             }
             let (mut buf, _) = BufMut::alloc()
@@ -310,8 +311,6 @@ impl Http2Handler {
 
             reader.read_exact(&mut payload_buf).await?;
             let payload = payload_buf.freeze();
-
-            println!("ASH frame: {:?}", frame);
 
             match &frame.frame_type {
                 FrameType::Settings(_) => Some(FrameFacade::SettingsFrame(
@@ -348,7 +347,9 @@ impl Http2Handler {
             }
         };
 
-        println!("Before OK frame_facade {:?}", frame_facade);
+        debug!("frame is parsed and frame facade object is created. frame_facade : {:?}",
+            frame_facade
+        );
         Ok(frame_facade)
     }
 

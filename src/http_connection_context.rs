@@ -1,5 +1,6 @@
 use std::cmp::max;
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use anyhow::{anyhow, bail};
@@ -8,6 +9,7 @@ use tokio::sync::mpsc::{
     Sender
 };
 use tokio_util::sync::CancellationToken;
+use tracing::Span;
 use crate::http2::common_frame_facade::FrameFacade;
 use crate::http2::http2_conn_options::{
     Http2ConnectionOptions,
@@ -51,8 +53,11 @@ impl Http11ConnectionContext1 {
 
 
 pub struct Http2ConnectionContext1 {
+    conn_id: u64,
+
     streams: HashMap<u32, Http2Stream>,
     streams_channels: HashMap<u32, Sender<Http2ChannelMessage>>,
+    streams_spans: HashMap<u32, Span>,
 
     //
     http2_options_from_client: Http2ConnectionOptions,
@@ -95,13 +100,20 @@ pub struct Http2ConnectionContext1 {
 impl Http2ConnectionContext1 {
 
     pub fn new() -> Self {
+        let mut hasher = DefaultHasher::new();
+        "connection".hash(&mut hasher);
+        let conn_id = hasher.finish();
 
         let cancellation_token = CancellationToken::new();
         let reader_token = cancellation_token.clone();
         let entire_child_token = cancellation_token.child_token();
         Http2ConnectionContext1 {
+            conn_id,
+
             streams: HashMap::new(),
             streams_channels: HashMap::new(),
+            streams_spans: HashMap::new(),
+
             http2_options_from_client: Http2ConnectionOptions::default(),
             http2_options_from_me: Http2ConnectionOptions::default(),
 
@@ -130,10 +142,6 @@ impl Http2ConnectionContext1 {
 
     // For The check
     pub fn is_valid_considering_inflight_headers(&self, frame: &FrameFacade) -> bool {
-        println!("### is_valid_considering_inflight_headers {:?}", frame);
-
-
-
         if self.inflight_headers_frame_stream_id.is_none() {
             return true;
         }
@@ -266,10 +274,15 @@ impl Http2ConnectionContext1 {
         self.go_away_stream_id = Some(goaway_stream_id)
     }
 
-    pub fn add_stream(&mut self, sid: u32, channel: Sender<Http2ChannelMessage>) {
+    pub fn add_stream(&mut self,
+                      sid: u32,
+                      channel: Sender<Http2ChannelMessage>,
+                      span: Span
+    ) {
         self.streams_channels.insert(sid, channel);
         self.child_tokens.insert(sid, self.stream_root_token.child_token());
         self.current_active_stream_count += 1;
+        self.streams_spans.insert(sid, span);
     }
 
     pub fn get_sender_to_channel(&self, sid: u32) -> Option<&Sender<Http2ChannelMessage>> {
@@ -328,10 +341,6 @@ impl Http2ConnectionContext1 {
 
     pub fn update_options_from_client(&mut self, options: PartialHttp2ConnectionOptions) {
         self.http2_options_from_client.update(options);
-    }
-
-    pub fn print_options(&mut self) {
-        println!("{:?}", self.http2_options_from_client);
     }
 
     // Related Error

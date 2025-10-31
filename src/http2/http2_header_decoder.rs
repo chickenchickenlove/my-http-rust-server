@@ -113,7 +113,6 @@ impl<'a> Http2HeaderDecoder<'a> {
                     let header_name = String::from_utf8(kk)?;
                     let header_value = String::from_utf8(vv)?;
 
-                    println!("header_name: {}", header_name);
                     // validate
                     // 8.1.2.6.  Malformed Requests and Responses
                     //    A request or response that includes a payload body can include a

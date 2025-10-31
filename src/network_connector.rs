@@ -1,5 +1,7 @@
 use std::ascii::AsciiExt;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::ptr::hash;
 use std::sync::{
     Arc
 };
@@ -25,6 +27,8 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, field, info, info_span, warn, Instrument, Span};
+use tracing::field::debug;
 use crate::connection::{
     ConnectionOwner,
     PrefaceMessage
@@ -45,7 +49,7 @@ use crate::http2::frame_settings::SettingsFrameFacade;
 use crate::http2::http2_errors::{ErrorCode, Http2Error};
 use crate::http2::http2_header_decoder::Http2HeaderDecoder;
 use crate::http2::http2_reader::ReaderTask;
-use crate::http2::http2_stream::{ActiveStreamCountCommand, ReaderChannelMessage};
+use crate::http2::http2_stream::{new_stream_span, ActiveStreamCountCommand, ReaderChannelMessage};
 use crate::http2_stream::{
     Http2ChannelMessage,
     Http2Stream,
@@ -105,10 +109,9 @@ impl NetworkConnector {
                 };
 
                 if let Err(e) = res_future.await {
-                    println!("Error occured {:?}. client may got receive response from server.", e);
+                    warn!("unexpected error occurred during dispatch, error: {}. client may got receive response from server", e);
                 }
                 if !should_keep_alive {
-                    println!("should close");
                     break
                 }
             } else {
@@ -143,11 +146,10 @@ impl NetworkConnector {
                 };
 
                 if let Err(e) = res_future.await {
-                    println!("Error occured {:?}. client may got receive response from server.", e);
+                    warn!("unexpected error occurred during dispatch, error: {}. client may got receive response from server", e);
                 }
 
                 if !should_keep_alive {
-                    println!("should close");
                     break
                 }
 
@@ -163,9 +165,6 @@ impl NetworkConnector {
                          mut conn_ctx: Http2ConnectionContext1,
                          preface_message: PrefaceMessage) -> anyhow::Result<()>
     {
-
-        // let mut error: Option<anyhow::Error> = None;
-
         // TODO: clean up terminated streams.
         // TODO: Handle Pending Frames because of window size.
         let (mut reader, mut writer) = owner.into_parts();
@@ -212,7 +211,7 @@ impl NetworkConnector {
 
                 match e.downcast::<Http2Error>() {
                     Ok(http2_error) => {
-                        println!("http2_error {:?}", http2_error);
+                        warn!("connection encounters error {}", http2_error);
                         match http2_error {
                             Http2Error::ConnectionError(error_code) => {
                                 self.handle_connection_error(error_code, &mut conn_ctx, &mut writer).await?
@@ -223,7 +222,8 @@ impl NetworkConnector {
                         }
                     },
                     _ => {
-                        println!("Error Occured. during downcast");
+                        // anyhow::Error 말고, 커스텀 에러로 바꾸면 이런 부분을 고려하지 않아도 될 듯 함.
+                        debug!("connection failed to downcast error.");
                     }
                 }
             }
@@ -240,6 +240,7 @@ impl NetworkConnector {
                     match maybe_parsed_frame {
                         ReaderChannelMessage::MaybeFrameParsed { frame: parsed_frame } => {
                             if !conn_ctx.is_valid_considering_inflight_headers(&parsed_frame) {
+                                warn!("connection got unexpected frame during handling infligt headers.");
                                 conn_ctx.update_error(Http2Error::ConnectionError(ErrorCode::ProtocolError).into());
                                 return Ok(())
                             }
@@ -263,12 +264,11 @@ impl NetworkConnector {
 
                 // Task2 -> Handle Request Context from Stream.
                 Some(msg) = rx_for_stream.recv() => {
-                    // println!("### Connection Context got Message from stream : {:?}", msg);
-                    println!("### Connection Context got Message from stream");
                     match msg {
                         // Should dispatch with RequestContext.
                         Http2ChannelMessage::RequestContextForDispatch {req_ctx, stream_id} => {
 
+                            debug!("connection process got dispatch request from stream. msg: {:?}", req_ctx);
                             let dis = self.dispatcher.clone();
                             let limiter = self.concurrent_dispatch_limit.clone();
                             let cancel = conn_ctx.get_stream_token_by_stream_id(stream_id);
@@ -276,7 +276,7 @@ impl NetworkConnector {
                             if let Some(tx_to_stream) = conn_ctx.get_sender_to_channel(stream_id) {
                                 let tx = tx_to_stream.clone();
                                 let _join_handle = spawn(async move {
-                                    let _permit = limiter.acquire().await.map_err(|_| anyhow!(("Acquire Error")));
+                                    let _permit = limiter.acquire().await.map_err(|_| anyhow!("Acquire Error"));
                                     let fut = dis.dispatch(req_ctx.into());
 
                                     select! {
@@ -318,7 +318,7 @@ impl NetworkConnector {
                         // Should Response to Client.
                         // However, It cannot be finished because of lack of window size.
                         Http2ChannelMessage::DoResponseToClient {frames, stream_id} => {
-
+                            debug!("connection process got response request from stream. msg: {:?}", frames);
                             let mut overflowed = false;
                             for frame in frames {
                                 if frame.is_data_frame() {
@@ -339,8 +339,9 @@ impl NetworkConnector {
                             Ok(())
                         },
 
-                        // TCase #3
+                        // Case #3
                         Http2ChannelMessage::DecodingHeadersRequest { stream_id, payload } => {
+                            debug!("connection process got decoding headers request from stream.");
                             match decoder.decode_headers(stream_id, payload) {
                                 Ok((headers, trailers)) => {
                                     if !headers.is_empty() {
@@ -360,6 +361,7 @@ impl NetworkConnector {
 
                         // Case #4
                         Http2ChannelMessage::DecodingTrailersRequest { stream_id, payload, trailers } => {
+                            debug!("connection process got decoding trailers request from stream.");
                             match decoder.decode_trailers(stream_id, payload, trailers) {
                                 Ok(headers) => {
                                     if !headers.is_empty() {
@@ -380,6 +382,7 @@ impl NetworkConnector {
 
                         // Case #5
                         Http2ChannelMessage::Error { error: from_error } => {
+                            debug!("connection process got error msg from stream. error: {}", from_error);
                             conn_ctx.update_error(from_error);
                             Ok(())
                         }
@@ -397,7 +400,7 @@ impl NetworkConnector {
 
                     // Unexpected Message.
                     _ => {
-                            println!("### Connection got unexpected Msg from stream : msg {:?}", msg);
+                            debug!("connection process got unexpected message from stream. msg {:?}", msg);
                             Ok(())
                         }
                     }
@@ -421,7 +424,7 @@ impl NetworkConnector {
 
         }
 
-        println!("### Connection context closed!");
+        debug!("connection process is closed.");
         conn_ctx.cancel_root_token();
         Ok(())
     }
@@ -489,9 +492,6 @@ impl NetworkConnector {
     {
         // TODO: Check Inflight Header Frame.
         // If so, PROTOCOL_ERROR(connection error) should be thrown.
-
-        println!("My Frame : {:?}", frame);
-
         if Http2StreamHandler::should_ignore(&frame, &conn_ctx) {
             return Ok(());
         }
@@ -520,7 +520,9 @@ impl NetworkConnector {
 
             let (tx, rx) = mpsc::channel::<Http2ChannelMessage>(100);
             let sid = frame.stream_id();
-            conn_ctx.add_stream(sid, tx);
+
+            let stream_span = new_stream_span(sid, init_window_size);
+            conn_ctx.add_stream(sid, tx, stream_span.clone());
 
             let stream = Http2Stream::with(
                 sid,
@@ -531,7 +533,11 @@ impl NetworkConnector {
             );
 
             conn_ctx.update_seen_max_stream_id(sid);
-            let _join_handle = spawn(stream.serve());
+            let _join_handle = tokio::spawn(stream
+                .serve()
+                .instrument(stream_span)
+            );
+
         };
 
         // Ack if need.
@@ -545,7 +551,7 @@ impl NetworkConnector {
 
         let sid = frame.stream_id();
         if let Some(tx_to_stream) = conn_ctx.get_sender_to_channel(sid) {
-            println!("### Try to send frame to stream. {:?}", frame);
+            debug!("connection try to send frame to stream : {}, frame : {:?}.", sid, frame);
             tx_to_stream
                 .send(
                     Http2ChannelMessage::FrameForRequest { frame }
@@ -562,10 +568,24 @@ impl NetworkConnector {
             .create_connection_context()
             .await?;
 
+        let mut hasher = DefaultHasher::new();
+        "connection".hash(&mut hasher);
+        let conn_id: u64 = hasher.finish();
+
+        let conn_span = info_span!("connection", conn_id=conn_id);
         match conn_ctx {
-            HttpConnectionContext1::HTTP1Context(v) => self.loop_http1(owner, v, preface_message).await,
-            HttpConnectionContext1::HTTP11Context(v) => self.loop_http11(owner, v, preface_message).await,
-            HttpConnectionContext1::HTTP2Context(v) => self.loop_http2(owner, v, preface_message).await?
+            HttpConnectionContext1::HTTP1Context(v) => self
+                .loop_http1(owner, v, preface_message)
+                .instrument(conn_span)
+                .await,
+            HttpConnectionContext1::HTTP11Context(v) => self
+                .loop_http11(owner, v, preface_message)
+                .instrument(conn_span)
+                .await,
+            HttpConnectionContext1::HTTP2Context(v) => self
+                .loop_http2(owner, v, preface_message)
+                .instrument(conn_span)
+                .await?
         }
 
         // HTTP/1, HTTP/1.1/ HTTP/2 마다 서로 다른 loop를 타도록 일단 만들자.
@@ -592,7 +612,7 @@ impl NetworkConnector {
 
 async fn send(frame: FrameFacade, writer: &mut BufWriter<OwnedWriteHalf>) -> anyhow::Result<()>
 {
-    println!("Sending frame: {:?}", frame);
+    info!("Sending frame: {:?}", frame);
     let bytes: Bytes = match frame {
         SettingsFrame(settings_frame) => {
             settings_frame.try_into()

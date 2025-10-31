@@ -229,6 +229,5 @@ pub fn h2_frame_to_bytes(
     // Attach payload.
     out.extend_from_slice(payload);
 
-    println!("{:?}", out);
     Ok(out.freeze())
 }
