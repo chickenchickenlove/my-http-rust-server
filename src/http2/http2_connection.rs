@@ -29,20 +29,16 @@ use crate::http_status::HttpStatus;
 pub struct Http2Connection {
     dispatcher: Arc<Dispatcher>,
     concurrent_dispatch_limit: Arc<Semaphore>,
-    // owner: ConnectionOwner,
     conn_ctx: Http2ConnectionContext1,
 }
 
 
 impl Http2Connection {
 
-    pub fn with(
-        // owner: ConnectionOwner,
-                conn_ctx: Http2ConnectionContext1,
+    pub fn with(conn_ctx: Http2ConnectionContext1,
                 dispatcher: Arc<Dispatcher>
     ) -> Self {
         Http2Connection {
-            // owner,
             conn_ctx,
             dispatcher,
             // TODO: use options. not hard-coded value.
@@ -324,7 +320,6 @@ impl Http2Connection {
     pub async fn handle_stream_error(&mut self,
                                      stream_id: u32,
                                      error_code: ErrorCode,
-                                     // conn_ctx: &mut Http2ConnectionContext1,
                                      writer: &mut BufWriter<OwnedWriteHalf>,
     ) -> anyhow::Result<()>
     {
@@ -339,7 +334,6 @@ impl Http2Connection {
     // TODO : Move this Http2Handler
     pub async fn handle_connection_error(&mut self,
                                          error_code: ErrorCode,
-                                         // conn_ctx: &mut Http2ConnectionContext1,
                                          writer: &mut BufWriter<OwnedWriteHalf>,
     ) -> anyhow::Result<()>{
         // TODO: 동시성 문제가 있을 수 있음. 따라서 Cancel 된 것을 무시해야한다고 Connection Process에 알려줘야 함.
@@ -353,7 +347,6 @@ impl Http2Connection {
 
     pub async fn handle_connection_level_frame(&mut self,
                                                mut frame: FrameFacade,
-                                               // conn_ctx: &mut Http2ConnectionContext1,
                                                handler: &mut Http2Handler,
                                                writer: &mut BufWriter<OwnedWriteHalf>,
     ) -> anyhow::Result<()>{
@@ -374,7 +367,6 @@ impl Http2Connection {
 
     pub async fn handle_stream_level_frame(&mut self,
                                            mut frame: FrameFacade,
-                                           // conn_ctx: &mut Http2ConnectionContext1,
                                            handler: &mut Http2Handler,
                                            writer: &mut BufWriter<OwnedWriteHalf>,
                                            init_window_size: u32
