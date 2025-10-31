@@ -12,7 +12,12 @@ tokio-util = { version = "0.7.15", features = ["io"]}
 chrono = "0.4.42"
 thiserror = "2.0.17"
 
+# Span
+tracing = { version = "0.1", features = ["attributes"] } # #[instrument] 사용
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
 # Http2
 fluke-hpack = "0.3.1"
 fluke-h2-parse = "0.1.1"
 fluke-buffet = "0.2.0"
+log = "0.4.28"
