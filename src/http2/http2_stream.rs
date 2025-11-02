@@ -100,12 +100,12 @@ pub enum ActiveStreamCountCommand {
     Keep,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum DecodingHeaderState {
     Initial,
     KeepGoing,
     Ready,
-    WaitingResponseFromDecoder,
+    Inflight,
     Completed,
 }
 
@@ -219,19 +219,12 @@ impl Http2Stream {
         )
     }
 
-    async fn send_frames(&mut self, payload_size: usize) {
-
-    }
-
     async fn send_request_ctx(&mut self, request_ctx: Http2RequestContext) -> anyhow::Result<()> {
         Ok(
             self.sender_to_conn
                 .send(Http2ChannelMessage::RequestContextForDispatch { req_ctx: request_ctx, stream_id: self.stream_id })
                 .await?
         )
-    }
-
-    fn composite_body(&mut self) -> () {
     }
 
     async fn maybe_composite_headers(&mut self) -> anyhow::Result<()>
@@ -241,7 +234,7 @@ impl Http2Stream {
             return Ok(());
         }
 
-        self.decoding_header_state = DecodingHeaderState::WaitingResponseFromDecoder;
+        self.decoding_header_state = DecodingHeaderState::Inflight;
 
         let mut header_fragments = BytesMut::new();
         while let Some(mut frame) = self.inflight_headers.pop_front() {
@@ -278,7 +271,7 @@ impl Http2Stream {
                 header_fragments.extend_from_slice(&bytes);
             }
 
-            self.decoding_trailers_state = DecodingHeaderState::WaitingResponseFromDecoder;
+            self.decoding_trailers_state = DecodingHeaderState::Inflight;
             self.sender_to_conn
                 .send(
                     Http2ChannelMessage::DecodingTrailersRequest {
@@ -347,7 +340,7 @@ impl Http2Stream {
 
 
     fn handle_trailers_in_progress(&self) -> bool {
-        if matches!(self.decoding_header_state, DecodingHeaderState::WaitingResponseFromDecoder) ||
+        if matches!(self.decoding_header_state, DecodingHeaderState::Inflight) ||
            matches!(self.decoding_header_state, DecodingHeaderState::Completed) {
             return true;
         }
@@ -385,7 +378,7 @@ impl Http2Stream {
             }
 
             ContinuationFrame(_) => {
-                if matches!(self.decoding_header_state, DecodingHeaderState::WaitingResponseFromDecoder) ||
+                if matches!(self.decoding_header_state, DecodingHeaderState::Inflight) ||
                    matches!(self.decoding_header_state, DecodingHeaderState::Completed)
                 {
                     if frame.has_end_headers_flag() {
@@ -664,13 +657,13 @@ impl Http2Stream {
         self.window_about_client >= payload_size as u32
     }
 
-    fn validate_from_client(&mut self, frame: &FrameFacade) -> anyhow::Result<()>{
+    fn validate_from_client(&mut self, frame: &FrameFacade) -> anyhow::Result<()> {
         if matches!(frame, FrameFacade::ContinuationFrame(_)) &&
         (
             matches!(self.decoding_header_state, DecodingHeaderState::Initial) ||
             matches!(self.decoding_trailers_state, DecodingHeaderState::Completed) ||
             (
-                matches!(self.decoding_header_state, DecodingHeaderState::WaitingResponseFromDecoder) &&
+                matches!(self.decoding_header_state, DecodingHeaderState::Inflight) &&
                 matches!(self.decoding_trailers_state, DecodingHeaderState::Initial)
             ) ||
             (
@@ -693,7 +686,7 @@ impl Http2Stream {
             ) ||
             (
                 matches!(self.decoding_header_state, DecodingHeaderState::Completed)  &&
-                matches!(self.decoding_trailers_state, DecodingHeaderState::WaitingResponseFromDecoder)
+                matches!(self.decoding_trailers_state, DecodingHeaderState::Inflight)
             ) ||
             (
                 matches!(self.decoding_header_state, DecodingHeaderState::Completed)  &&
@@ -882,7 +875,7 @@ impl Http2Stream {
 // https://datatracker.ietf.org/doc/html/rfc7540#section-5.1
 
 #[derive(Debug, Copy, Clone)]
-enum StreamState {
+pub enum StreamState {
     // The lifecycle of a stream is shown in Figure 2.
     //
     //                                 +--------+

@@ -46,6 +46,7 @@ use crate::http2::common_frame_facade::FrameFacade::{DataFrame, GoawayFrame, Hea
 use crate::http2::frame_goaway::GoawayFrameFacade;
 use crate::http2::frame_rst_stream::RstStreamFrameFacade;
 use crate::http2::frame_settings::SettingsFrameFacade;
+use crate::http2::http2_connection2::Http2Connection2;
 use crate::http2::http2_connection::Http2Connection;
 use crate::http2::http2_errors::{ErrorCode, Http2Error};
 use crate::http2::http2_header_decoder::Http2HeaderDecoder;
@@ -161,13 +162,24 @@ impl NetworkConnector {
         }
     }
 
+
+    // async fn loop_http2(&self,
+    //                      mut owner: ConnectionOwner,
+    //                      mut conn_ctx: Http2ConnectionContext1,
+    //                      preface_message: PrefaceMessage)
+    //     -> anyhow::Result<()>
+    // {
+    //     let mut http2_conn = Http2Connection::with(conn_ctx, self.dispatcher.clone());
+    //     http2_conn.serve(owner, preface_message).await
+    // }
+
     async fn loop_http2(&self,
-                         mut owner: ConnectionOwner,
-                         mut conn_ctx: Http2ConnectionContext1,
-                         preface_message: PrefaceMessage)
-        -> anyhow::Result<()>
+                        mut owner: ConnectionOwner,
+                        mut conn_ctx: Http2ConnectionContext1,
+                        preface_message: PrefaceMessage)
+                        -> anyhow::Result<()>
     {
-        let mut http2_conn = Http2Connection::with(conn_ctx, self.dispatcher.clone());
+        let mut http2_conn = Http2Connection2::with(conn_ctx, self.dispatcher.clone());
         http2_conn.serve(owner, preface_message).await
     }
 

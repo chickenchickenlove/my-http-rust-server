@@ -15,6 +15,7 @@ use crate::http2::http2_conn_options::{
     Http2ConnectionOptions,
     PartialHttp2ConnectionOptions
 };
+use crate::http2::stream::stream::Stream;
 use crate::http2_stream::{
     Http2ChannelMessage,
     Http2Stream
@@ -54,6 +55,8 @@ impl Http11ConnectionContext1 {
 
 pub struct Http2ConnectionContext1 {
     conn_id: u64,
+
+    streams2: HashMap<u32, Stream>,
 
     streams: HashMap<u32, Http2Stream>,
     streams_channels: HashMap<u32, Sender<Http2ChannelMessage>>,
@@ -110,6 +113,7 @@ impl Http2ConnectionContext1 {
         Http2ConnectionContext1 {
             conn_id,
 
+            streams2: HashMap::new(),
             streams: HashMap::new(),
             streams_channels: HashMap::new(),
             streams_spans: HashMap::new(),
@@ -174,6 +178,15 @@ impl Http2ConnectionContext1 {
 
     pub fn has_inflight_headers(&self) -> bool {
         self.inflight_headers_frame_stream_id.is_some()
+    }
+
+
+    pub fn find_stream_mut_ref_by_stream_id(&mut self, stream_id: u32) -> Option<&mut Stream> {
+        self.streams2.get_mut(&stream_id)
+    }
+
+    pub fn find_stream_by_stream_id(&mut self, stream_id: u32) -> Option<Stream> {
+        self.streams2.remove(&stream_id)
     }
 
 
@@ -274,6 +287,7 @@ impl Http2ConnectionContext1 {
         self.go_away_stream_id = Some(goaway_stream_id)
     }
 
+    // Deprecated
     pub fn add_stream(&mut self,
                       sid: u32,
                       channel: Sender<Http2ChannelMessage>,
@@ -284,6 +298,26 @@ impl Http2ConnectionContext1 {
         self.current_active_stream_count += 1;
         self.streams_spans.insert(sid, span);
     }
+
+    pub fn add_stream2(&mut self,
+                      sid: u32,
+                      stream: Stream,
+                      span: Span,
+    ) {
+        // self.streams_channels.insert(sid, channel);
+        // self.child_tokens.insert(sid, self.stream_root_token.child_token());
+        self.streams2.insert(sid, stream);
+        self.current_active_stream_count += 1;
+        self.streams_spans.insert(sid, span);
+    }
+
+    pub fn add_stream3(&mut self,
+                       sid: u32,
+                       stream: Stream,
+    ) {
+        self.streams2.insert(sid, stream);
+    }
+
 
     pub fn get_sender_to_channel(&self, sid: u32) -> Option<&Sender<Http2ChannelMessage>> {
         self.streams_channels.get(&sid)
